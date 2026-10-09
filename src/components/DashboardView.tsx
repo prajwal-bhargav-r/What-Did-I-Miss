@@ -19,6 +19,8 @@ import {
 interface DashboardViewProps {
   conversation: ConversationRecord;
   userProfile: UserProfile;
+  isSynthesizingGroq?: boolean;
+  onSynthesizeWithGroq?: () => void;
   onOpenImport: () => void;
   onNavigate: (section: ActiveNavSection, filterPriority?: 'high' | 'medium' | 'low') => void;
   onInspectMessage: (messageId: string) => void;
@@ -29,6 +31,8 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({
   conversation,
   userProfile,
+  isSynthesizingGroq = false,
+  onSynthesizeWithGroq,
   onOpenImport,
   onNavigate,
   onInspectMessage,
@@ -248,49 +252,74 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* 4. AI-Powered Conversation Summary with Selectable Length */}
       <section className="rounded-xl border border-neutral-200 bg-white">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-200 px-6 py-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-neutral-200 px-6 py-4">
           <div>
-            <h2 className="text-base font-semibold text-neutral-950">Conversation Summary</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base font-semibold text-neutral-950">Conversation Summary</h2>
+              <span className="font-mono text-xs text-neutral-500">
+                · {conversation.summary.summaryEngineUsed || 'Local Grounded Semantic Engine'}
+              </span>
+            </div>
             <p className="mt-0.5 text-xs text-neutral-500">
-              Synthesized locally from {conversation.stats.userMessages} messages · Click any #message reference to inspect original evidence
+              Synthesized from {conversation.stats.userMessages} messages · Click any #message reference to inspect original evidence
             </p>
           </div>
 
-          {/* Interactive Length Selector */}
-          <div className="flex items-center gap-1 rounded-lg bg-neutral-100 p-1 border border-neutral-200 self-start sm:self-center">
-            <button
-              type="button"
-              onClick={() => setSummaryLength('very_short')}
-              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                summaryLength === 'very_short'
-                  ? 'bg-neutral-950 text-white font-semibold'
-                  : 'text-neutral-600 hover:text-neutral-950'
-              }`}
-            >
-              Very Short
-            </button>
-            <button
-              type="button"
-              onClick={() => setSummaryLength('standard')}
-              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                summaryLength === 'standard'
-                  ? 'bg-neutral-950 text-white font-semibold'
-                  : 'text-neutral-600 hover:text-neutral-950'
-              }`}
-            >
-              Standard
-            </button>
-            <button
-              type="button"
-              onClick={() => setSummaryLength('detailed')}
-              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
-                summaryLength === 'detailed'
-                  ? 'bg-neutral-950 text-white font-semibold'
-                  : 'text-neutral-600 hover:text-neutral-950'
-              }`}
-            >
-              Detailed
-            </button>
+          <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-center">
+            {onSynthesizeWithGroq && (
+              <button
+                type="button"
+                onClick={onSynthesizeWithGroq}
+                disabled={isSynthesizingGroq}
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-950 hover:border-neutral-950 hover:bg-neutral-50 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-neutral-950" />
+                <span>
+                  {isSynthesizingGroq
+                    ? 'Synthesizing with Groq...'
+                    : conversation.summary.summaryEngineUsed?.includes('Groq')
+                    ? 'Refresh Groq AI Summary'
+                    : 'Enhance Summary with Groq AI'}
+                </span>
+              </button>
+            )}
+
+            {/* Interactive Length Selector */}
+            <div className="flex items-center gap-1 rounded-lg bg-neutral-100 p-1 border border-neutral-200">
+              <button
+                type="button"
+                onClick={() => setSummaryLength('very_short')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                  summaryLength === 'very_short'
+                    ? 'bg-neutral-950 text-white font-semibold'
+                    : 'text-neutral-600 hover:text-neutral-950'
+                }`}
+              >
+                Very Short
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryLength('standard')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                  summaryLength === 'standard'
+                    ? 'bg-neutral-950 text-white font-semibold'
+                    : 'text-neutral-600 hover:text-neutral-950'
+                }`}
+              >
+                Standard
+              </button>
+              <button
+                type="button"
+                onClick={() => setSummaryLength('detailed')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                  summaryLength === 'detailed'
+                    ? 'bg-neutral-950 text-white font-semibold'
+                    : 'text-neutral-600 hover:text-neutral-950'
+                }`}
+              >
+                Detailed
+              </button>
+            </div>
           </div>
         </div>
 

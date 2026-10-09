@@ -5,6 +5,7 @@ import {
   ConversationSummary,
   DeadlineCategory,
   ExtractedDeadline,
+  GroqStatusResponse,
   MessageCategory,
   ParsedMessage,
   PersonalMention,
@@ -1583,6 +1584,101 @@ function buildGroundedSummary(
     announcements,
     decisions,
     unansweredQuestions,
+    summaryEngineUsed: 'Local Grounded Semantic Engine (On-Device)',
+  };
+}
+
+export function buildTranscriptContextForLLM(messages: ParsedMessage[]): string {
+  return messages
+    .filter((m) => !m.isSystem && !m.isMediaOmitted && !m.isDuplicate)
+    .slice(0, 180)
+    .map((m) => {
+      const notes: string[] = [];
+      if (m.isJokeOrHypothetical) notes.push('HUMOR/HYPOTHETICAL');
+      if (m.supersededByIndex) notes.push(`SUPERSEDED BY #${m.supersededByIndex}`);
+      if (m.supersedesIndex) notes.push(`SUPERSEDES #${m.supersedesIndex}`);
+      if (m.changeSummary) notes.push(m.changeSummary);
+      const tag = notes.length > 0 ? ` [${notes.join('; ')}]` : '';
+      return `[#${m.index}] (${m.timestampRaw}) ${m.sender}${tag}: ${m.content}`;
+    })
+    .join('\n');
+}
+
+export async function checkGroqStatus(verify = false): Promise<GroqStatusResponse> {
+  try {
+    const res = await fetch(`/api/groq/status${verify ? '?verify=true' : ''}`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return (await res.json()) as GroqStatusResponse;
+  } catch {
+    return {
+      configured: false,
+      verified: false,
+      defaultModel: 'qwen/qwen3.8-27b',
+      models: [
+        { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B (Ultra-Fast Grounded)' },
+        { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (Deep Reasoning)' },
+        { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B (Balanced Reasoning)' },
+      ],
+      message: 'Local offline mode (Groq endpoint unreachable).',
+    };
+  }
+}
+
+export async function generateGroqConversationSummary(
+  conversation: ConversationRecord,
+  userProfile: UserProfile
+): Promise<{
+  overallBrief: string;
+  veryShort: string[];
+  standard: string[];
+  detailed: string[];
+  engineUsed: string;
+}> {
+  const messagesContext = buildTranscriptContextForLLM(conversation.messages);
+  const res = await fetch('/api/groq/summarize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      conversationName: conversation.name,
+      userName: userProfile.userName,
+      messagesContext,
+      model: userProfile.groqModel || 'qwen/qwen3.8-27b',
+    }),
+  });
+
+  if (!res.ok) {
+    const errData = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(errData.error || `Groq API returned HTTP ${res.status}`);
+  }
+
+  const data = (await res.json()) as {
+    summary: {
+      overallBrief: string;
+      veryShort: string[];
+      standard: string[];
+      detailed: string[];
+    };
+    modelUsed: string;
+    latencyMs: number;
+  };
+
+  return {
+    overallBrief: data.summary.overallBrief || conversation.summary.overallBrief,
+    veryShort:
+      data.summary.veryShort?.length > 0
+        ? data.summary.veryShort
+        : conversation.summary.veryShort,
+    standard:
+      data.summary.standard?.length > 0
+        ? data.summary.standard
+        : conversation.summary.standard,
+    detailed:
+      data.summary.detailed?.length > 0
+        ? data.summary.detailed
+        : conversation.summary.detailed,
+    engineUsed: `Groq Cloud LLM · ${data.modelUsed} (${data.latencyMs}ms)`,
   };
 }
 
@@ -1916,7 +2012,58 @@ export async function answerConversationQuestion(
     }
   }
 
-  if (userProfile.useBrowserNativeAI && citations.length > 0) {
+  if (userProfile.useGroqAI !== false) {
+    try {
+      const messagesContext = buildTranscriptContextForLLM(conversation.messages);
+      const res = await fetch('/api/groq/qa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: qClean,
+          conversationName: conversation.name,
+          userName: userProfile.userName,
+          messagesContext,
+          model: userProfile.groqModel || 'qwen/qwen3.8-27b',
+        }),
+      });
+
+      if (res.ok) {
+        const data = (await res.json()) as {
+          answer?: string;
+          modelUsed?: string;
+          latencyMs?: number;
+        };
+        if (data.answer && data.answer.trim()) {
+          answerLines = [data.answer.trim()];
+          engineUsed = `Groq Cloud LLM · ${data.modelUsed || 'qwen/qwen3.8-27b'} (${
+            data.latencyMs || 0
+          }ms)`;
+
+          // Extract any #N message citations mentioned in the Groq response so they appear as clickable citation buttons
+          const citedIndices = Array.from(data.answer.matchAll(/#(\d+)\b/g)).map((m) =>
+            parseInt(m[1], 10)
+          );
+          for (const idxNum of citedIndices) {
+            const citedMsg = conversation.messages.find((m) => m.index === idxNum);
+            if (citedMsg) {
+              addCitation(citedMsg);
+            }
+          }
+
+          if (
+            /does not contain|could not find|not mentioned|no information/i.test(data.answer) &&
+            citations.length === 0
+          ) {
+            confidence = 'not_found';
+          } else {
+            confidence = 'grounded';
+          }
+        }
+      }
+    } catch {
+      // Fallback gracefully to the local grounded semantic answer if offline
+    }
+  } else if (userProfile.useBrowserNativeAI && citations.length > 0) {
     try {
       const win = window as unknown as {
         ai?: {

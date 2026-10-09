@@ -23,7 +23,10 @@ import {
   UserProfile,
 } from './types/chat';
 import { SAMPLE_CONVERSATIONS } from './data/sampleConversations';
-import { analyzeConversationLocal } from './services/localAiEngine';
+import {
+  analyzeConversationLocal,
+  generateGroqConversationSummary,
+} from './services/localAiEngine';
 import {
   deleteLocalConversation,
   loadAllLocalConversations,
@@ -60,6 +63,7 @@ export default function App() {
   >('all_important');
   const [allMsgsPriorityFilter, setAllMsgsPriorityFilter] = useState<'all' | PriorityLevel>('all');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  const [isSynthesizingGroq, setIsSynthesizingGroq] = useState<boolean>(false);
 
   // Initialize from IndexedDB or load representative sample conversations
   useEffect(() => {
@@ -152,6 +156,41 @@ export default function App() {
     []
   );
 
+  // Synthesize or refresh summary using Groq Cloud LLM
+  const handleSynthesizeWithGroq = useCallback(
+    async (targetConv?: ConversationRecord, profileOverride?: UserProfile) => {
+      const conv = targetConv || activeConversation;
+      const prof = profileOverride || userProfile;
+      if (!conv || isSynthesizingGroq) return;
+
+      setIsSynthesizingGroq(true);
+      try {
+        const groqResult = await generateGroqConversationSummary(conv, prof);
+        const updatedConv: ConversationRecord = {
+          ...conv,
+          updatedAt: new Date().toISOString(),
+          summary: {
+            ...conv.summary,
+            overallBrief: groqResult.overallBrief,
+            veryShort: groqResult.veryShort,
+            standard: groqResult.standard,
+            detailed: groqResult.detailed,
+            summaryEngineUsed: groqResult.engineUsed,
+          },
+        };
+        setConversations((prev) =>
+          prev.map((c) => (c.id === updatedConv.id ? updatedConv : c))
+        );
+        await persistIfEnabled(updatedConv, prof);
+      } catch {
+        // Keep local summary if Groq API is unavailable
+      } finally {
+        setIsSynthesizingGroq(false);
+      }
+    },
+    [activeConversation, isSynthesizingGroq, persistIfEnabled, userProfile]
+  );
+
   // Import a new chat conversation
   const handleImportConversation = async (
     name: string,
@@ -170,6 +209,10 @@ export default function App() {
     setActiveConversationId(analyzed.id);
     setActiveSection('dashboard');
     await persistIfEnabled(analyzed, userProfile);
+
+    if (userProfile.useGroqAI !== false) {
+      void handleSynthesizeWithGroq(analyzed, userProfile);
+    }
   };
 
   // Update User Profile (Name, Aliases, Followed Keywords, Persistence Settings)
@@ -679,6 +722,8 @@ export default function App() {
                 <DashboardView
                   conversation={activeConversation}
                   userProfile={userProfile}
+                  isSynthesizingGroq={isSynthesizingGroq}
+                  onSynthesizeWithGroq={() => void handleSynthesizeWithGroq()}
                   onOpenImport={() => setIsImportModalOpen(true)}
                   onNavigate={handleNavigate}
                   onInspectMessage={(msgId) => setInspectMessageId(msgId)}
@@ -751,6 +796,7 @@ export default function App() {
                 <AskAiView
                   conversation={activeConversation}
                   userProfile={userProfile}
+                  onUpdateProfile={handleUpdateProfile}
                   onAppendQATurn={handleAppendQATurn}
                   onClearQAHistory={handleClearQAHistory}
                   onInspectMessage={(msgId) => setInspectMessageId(msgId)}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Trash2, Database, Cpu, CheckCircle2 } from 'lucide-react';
-import { ConversationRecord, UserProfile } from '../types/chat';
+import { Trash2, Database, Cpu, CheckCircle2, Sparkles, RefreshCw } from 'lucide-react';
+import { ConversationRecord, GroqStatusResponse, UserProfile } from '../types/chat';
 import { estimateStorageFootprintBytes } from '../services/storageService';
+import { checkGroqStatus } from '../services/localAiEngine';
 
 interface PrivacySettingsViewProps {
   conversations: ConversationRecord[];
@@ -19,13 +20,26 @@ export const PrivacySettingsView: React.FC<PrivacySettingsViewProps> = ({
   const [confirmWipe, setConfirmWipe] = useState(false);
   const [wipeCompleted, setWipeCompleted] = useState(false);
   const [browserNativeSupported, setBrowserNativeSupported] = useState<boolean>(false);
+  const [groqStatus, setGroqStatus] = useState<GroqStatusResponse | null>(null);
+  const [isVerifyingGroq, setIsVerifyingGroq] = useState(false);
 
   useEffect(() => {
     const win = window as unknown as {
       ai?: { languageModel?: unknown };
     };
     setBrowserNativeSupported(Boolean(win.ai?.languageModel));
+    checkGroqStatus(false).then(setGroqStatus);
   }, []);
+
+  const handleVerifyGroq = async () => {
+    setIsVerifyingGroq(true);
+    try {
+      const status = await checkGroqStatus(true);
+      setGroqStatus(status);
+    } finally {
+      setIsVerifyingGroq(false);
+    }
+  };
 
   const footprintBytes = estimateStorageFootprintBytes(conversations);
   const footprintKB = (footprintBytes / 1024).toFixed(1);
@@ -140,7 +154,96 @@ export const PrivacySettingsView: React.FC<PrivacySettingsViewProps> = ({
         </div>
       </section>
 
-      {/* 2. Local Inference Engine Selection & Honest Capabilities / Limitations */}
+      {/* 2. Groq Cloud LLM Integration (GROQ_API_KEY) */}
+      <section className="rounded-xl border border-neutral-200 bg-white p-6 space-y-5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-neutral-200 pb-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-xs text-neutral-950 font-semibold">
+              <Sparkles className="h-4 w-4" />
+              <span>Groq Cloud LLM Integration (Server-Side Secret Proxy)</span>
+            </div>
+            <h2 className="text-base font-semibold text-neutral-950">
+              High-Speed Grounded Summarization & Ask AI via Groq
+            </h2>
+            <p className="text-xs text-neutral-500">
+              Uses your configured <code className="font-mono text-neutral-900">GROQ_API_KEY</code> secret on the server to power ultra-fast grounded conversation summaries and natural-language Q&A. You can switch back to 100% Local On-Device Mode anytime.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleVerifyGroq}
+              disabled={isVerifyingGroq}
+              className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3.5 py-2 text-xs font-medium text-neutral-800 hover:border-neutral-950 hover:text-neutral-950 transition-colors whitespace-nowrap shrink-0"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isVerifyingGroq ? 'animate-spin' : ''}`} />
+              <span>{isVerifyingGroq ? 'Testing Key...' : 'Test Groq Connection'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                onUpdateProfile({
+                  ...userProfile,
+                  useGroqAI: userProfile.useGroqAI === false ? true : false,
+                })
+              }
+              className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                userProfile.useGroqAI !== false
+                  ? 'bg-neutral-950 text-white hover:bg-neutral-800'
+                  : 'border border-neutral-300 bg-neutral-100 text-neutral-800 hover:border-neutral-950'
+              }`}
+            >
+              {userProfile.useGroqAI !== false
+                ? 'Groq Cloud LLM: Enabled'
+                : 'Strict 100% Local Mode Active'}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4 text-xs">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-neutral-950">API Key Status:</span>
+              {groqStatus?.configured ? (
+                <span className="text-emerald-700 font-semibold">
+                  Configured & Verified ({groqStatus.message})
+                </span>
+              ) : (
+                <span className="text-amber-700 font-semibold">
+                  {groqStatus?.message || 'Checking server status...'}
+                </span>
+              )}
+            </div>
+            <p className="text-neutral-600">
+              Your API key remains strictly server-side (`process.env.GROQ_API_KEY`) and is never exposed to the browser client.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <label className="text-xs font-medium text-neutral-700 whitespace-nowrap">
+              Active Groq Model:
+            </label>
+            <select
+              value={userProfile.groqModel || 'qwen/qwen3.8-27b'}
+              onChange={(e) =>
+                onUpdateProfile({
+                  ...userProfile,
+                  groqModel: e.target.value,
+                })
+              }
+              className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-950 focus:border-neutral-950 focus:outline-none"
+            >
+              <option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Ultra-Fast Grounded)</option>
+              <option value="openai/gpt-oss-120b">GPT-OSS 120B (Deep Reasoning)</option>
+              <option value="openai/gpt-oss-20b">GPT-OSS 20B (Balanced Reasoning)</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      {/* 3. Local Inference Engine Selection & Honest Capabilities / Limitations */}
       <section className="rounded-xl border border-neutral-200 bg-white p-6 space-y-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-neutral-200 pb-4">
           <div className="space-y-1">

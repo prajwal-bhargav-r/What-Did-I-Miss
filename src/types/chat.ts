@@ -161,6 +161,22 @@ export interface ConversationSummary {
   announcements: SummaryHighlight[];
   decisions: SummaryHighlight[];
   unansweredQuestions: UnansweredQuestion[];
+  summaryEngineUsed?: string;
+}
+
+export interface GroqModelOption {
+  id: string;
+  label: string;
+}
+
+export interface GroqStatusResponse {
+  configured: boolean;
+  verified: boolean;
+  latencyMs?: number;
+  availableCount?: number;
+  defaultModel: string;
+  models: GroqModelOption[];
+  message: string;
 }
 
 export interface QACitation {
@@ -218,6 +234,8 @@ export interface UserProfile {
   followedTopics: string[];
   persistLocally: boolean;
   useBrowserNativeAI: boolean;
+  useGroqAI?: boolean;
+  groqModel?: string;
 }
 
 export type ActiveNavSection =

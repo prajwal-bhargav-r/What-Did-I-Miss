@@ -11,6 +11,8 @@ const DEFAULT_PROFILE: UserProfile = {
   followedTopics: ['exam', 'midterm', 'submission', 'api', 'deadline', 'slides'],
   persistLocally: true,
   useBrowserNativeAI: false,
+  useGroqAI: true,
+  groqModel: 'qwen/qwen3.8-27b',
 };
 
 function openLocalDatabase(): Promise<IDBDatabase> {
@@ -143,6 +145,14 @@ export function loadUserProfile(): UserProfile {
         typeof parsed.useBrowserNativeAI === 'boolean'
           ? parsed.useBrowserNativeAI
           : DEFAULT_PROFILE.useBrowserNativeAI,
+      useGroqAI:
+        typeof parsed.useGroqAI === 'boolean'
+          ? parsed.useGroqAI
+          : DEFAULT_PROFILE.useGroqAI,
+      groqModel:
+        typeof parsed.groqModel === 'string' && parsed.groqModel.trim()
+          ? parsed.groqModel
+          : DEFAULT_PROFILE.groqModel,
     };
   } catch {
     return DEFAULT_PROFILE;

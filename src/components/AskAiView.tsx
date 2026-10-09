@@ -6,6 +6,7 @@ import { answerConversationQuestion } from '../services/localAiEngine';
 interface AskAiViewProps {
   conversation: ConversationRecord;
   userProfile: UserProfile;
+  onUpdateProfile: (profile: UserProfile) => void;
   onAppendQATurn: (turn: QATurn) => void;
   onClearQAHistory: () => void;
   onInspectMessage: (messageId: string) => void;
@@ -26,6 +27,7 @@ const SUGGESTED_QUESTIONS = [
 export const AskAiView: React.FC<AskAiViewProps> = ({
   conversation,
   userProfile,
+  onUpdateProfile,
   onAppendQATurn,
   onClearQAHistory,
   onInspectMessage,
@@ -54,28 +56,109 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
     handleAsk(questionInput);
   };
 
+  const renderAnswerWithClickableLinks = (text: string) => {
+    const parts = text.split(/(#\d+)/g);
+    return parts.map((part, idx) => {
+      const m = part.match(/^#(\d+)$/);
+      if (m) {
+        const msgNum = parseInt(m[1], 10);
+        const target = conversation.messages.find((msg) => msg.index === msgNum);
+        if (target) {
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => onInspectMessage(target.id)}
+              className="font-mono font-bold text-neutral-950 underline decoration-neutral-400 hover:decoration-neutral-950 mx-0.5"
+              title={`Inspect original message #${msgNum}`}
+            >
+              {part}
+            </button>
+          );
+        }
+      }
+      return <React.Fragment key={idx}>{part}</React.Fragment>;
+    });
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-neutral-200 pb-5">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-neutral-200 pb-5">
         <div>
           <h1 className="text-xl font-bold text-neutral-950">
             Ask AI · Grounded Conversation Q&A
           </h1>
           <p className="mt-1 text-xs text-neutral-500">
-            Ask questions about <strong className="text-neutral-950">{conversation.name}</strong>. Answers are computed 100% locally using the imported messages as the strict source of truth, complete with source citations.
+            Ask questions about <strong className="text-neutral-950">{conversation.name}</strong>. Answers are strictly grounded in the imported messages and include clickable <span className="font-mono font-semibold text-neutral-900">#message</span> source citations.
           </p>
         </div>
 
-        {conversation.qaHistory.length > 0 && (
-          <button
-            type="button"
-            onClick={onClearQAHistory}
-            className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-950 hover:border-neutral-950 transition-colors self-start sm:self-center whitespace-nowrap shrink-0"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span>Clear Q&A History</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-center">
+          {/* Engine Mode Toggle */}
+          <div className="flex items-center gap-1 rounded-lg bg-neutral-100 p-1 border border-neutral-200">
+            <button
+              type="button"
+              onClick={() =>
+                onUpdateProfile({
+                  ...userProfile,
+                  useGroqAI: true,
+                })
+              }
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                userProfile.useGroqAI !== false
+                  ? 'bg-neutral-950 text-white font-semibold'
+                  : 'text-neutral-600 hover:text-neutral-950'
+              }`}
+            >
+              Groq Cloud LLM
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onUpdateProfile({
+                  ...userProfile,
+                  useGroqAI: false,
+                })
+              }
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                userProfile.useGroqAI === false
+                  ? 'bg-neutral-950 text-white font-semibold'
+                  : 'text-neutral-600 hover:text-neutral-950'
+              }`}
+            >
+              100% Local Engine
+            </button>
+          </div>
+
+          {userProfile.useGroqAI !== false && (
+            <select
+              value={userProfile.groqModel || 'qwen/qwen3.8-27b'}
+              onChange={(e) =>
+                onUpdateProfile({
+                  ...userProfile,
+                  groqModel: e.target.value,
+                })
+              }
+              aria-label="Select Groq LLM model"
+              className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-900 focus:border-neutral-950 focus:outline-none"
+            >
+              <option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Fast)</option>
+              <option value="openai/gpt-oss-120b">GPT-OSS 120B (Reasoning)</option>
+              <option value="openai/gpt-oss-20b">GPT-OSS 20B (Balanced)</option>
+            </select>
+          )}
+
+          {conversation.qaHistory.length > 0 && (
+            <button
+              type="button"
+              onClick={onClearQAHistory}
+              className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 hover:text-neutral-950 hover:border-neutral-950 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Clear Q&A History</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Quick Starter Questions */}
@@ -155,7 +238,7 @@ export const AskAiView: React.FC<AskAiViewProps> = ({
               {/* Grounded Answer */}
               <div className="p-5 space-y-4">
                 <div className="text-sm leading-relaxed text-neutral-900 whitespace-pre-wrap">
-                  {turn.answer}
+                  {renderAnswerWithClickableLinks(turn.answer)}
                 </div>
 
                 {/* Supporting Original Message Citations */}
