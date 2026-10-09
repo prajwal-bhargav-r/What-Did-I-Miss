@@ -25,6 +25,8 @@ export type DeadlineCategory =
   | 'schedule_change'
   | 'event';
 
+export type FactConfidence = 'explicit' | 'inferred' | 'uncertain';
+
 export interface ParsedMessage {
   id: string;
   index: number; // 1-based chronological order
@@ -44,6 +46,12 @@ export interface ParsedMessage {
   priorityReasons: string[];
   categories: MessageCategory[];
   threadContext: string | null;
+  requiresResponse?: boolean;
+  supersededByMessageId?: string | null;
+  supersededByIndex?: number | null;
+  supersedesMessageId?: string | null;
+  supersedesIndex?: number | null;
+  changeSummary?: string | null;
 }
 
 export interface ActionItem {
@@ -51,6 +59,7 @@ export interface ActionItem {
   conversationId: string;
   messageId: string;
   messageIndex: number;
+  conciseTitle?: string;
   description: string;
   assignee: string;
   assigneeConfidence: 'explicit' | 'inferred_sender' | 'uncertain';
@@ -77,6 +86,7 @@ export interface ExtractedDeadline {
   timeString: string | null;
   resolutionType: DateResolutionType;
   resolutionExplanation: string;
+  previousScheduleNote?: string | null;
   candidateOptions?: string[]; // Provided when date is ambiguous so user can confirm
   userConfirmedDate: string | null;
   isConfirmed: boolean;
@@ -91,9 +101,16 @@ export interface PersonalMention {
   conversationId: string;
   messageId: string;
   messageIndex: number;
-  type: 'direct_mention' | 'assigned_task' | 'direct_question' | 'reply_to_user' | 'followed_topic';
+  type:
+    | 'direct_mention'
+    | 'assigned_task'
+    | 'direct_question'
+    | 'reply_to_user'
+    | 'followed_topic'
+    | 'requires_response';
   matchedTerm: string;
   reason: string;
+  requiresResponse?: boolean;
   priority: PriorityLevel;
   sender: string;
   timestampRaw: string;
@@ -112,6 +129,11 @@ export interface TopicCluster {
 export interface SummaryHighlight {
   id: string;
   text: string;
+  conciseHeadline?: string;
+  changeSummary?: string | null;
+  confidence?: FactConfidence;
+  supersedesIndex?: number | null;
+  supersededByIndex?: number | null;
   sender: string;
   timestampRaw: string;
   messageId: string;
@@ -131,6 +153,7 @@ export interface UnansweredQuestion {
 }
 
 export interface ConversationSummary {
+  overallBrief: string;
   veryShort: string[];
   standard: string[];
   detailed: string[];

@@ -72,8 +72,45 @@ export default function App() {
       if (!mounted) return;
 
       if (stored.length > 0) {
-        setConversations(stored);
-        setActiveConversationId(stored[0].id);
+        const upgraded = stored.map((conv) => {
+          const fresh = analyzeConversationLocal(
+            conv.rawText,
+            conv.name,
+            conv.sourceType,
+            profile,
+            conv.fileName,
+            conv.id
+          );
+          const taskStatusMap = new Map((conv.actionItems || []).map((t) => [t.id, t.status]));
+          fresh.actionItems = fresh.actionItems.map((t) => ({
+            ...t,
+            status: taskStatusMap.get(t.id) || t.status,
+          }));
+          const confirmedDateMap = new Map(
+            (conv.deadlines || [])
+              .filter((d) => d.userConfirmedDate)
+              .map((d) => [d.id, d.userConfirmedDate!])
+          );
+          fresh.deadlines = fresh.deadlines.map((d) =>
+            confirmedDateMap.has(d.id)
+              ? {
+                  ...d,
+                  userConfirmedDate: confirmedDateMap.get(d.id)!,
+                  isConfirmed: true,
+                }
+              : d
+          );
+          fresh.qaHistory = conv.qaHistory || [];
+          fresh.createdAt = conv.createdAt || fresh.createdAt;
+          return fresh;
+        });
+        setConversations(upgraded);
+        setActiveConversationId(upgraded[0].id);
+        if (profile.persistLocally) {
+          for (const rec of upgraded) {
+            await saveConversationLocally(rec);
+          }
+        }
       } else {
         const seeded = SAMPLE_CONVERSATIONS.map((preset) =>
           analyzeConversationLocal(
@@ -514,8 +551,8 @@ export default function App() {
 
       {/* Main Workspace Layout: Sidebar + Content Viewport */}
       <div className="flex-1 flex max-w-[1440px] w-full mx-auto">
-        {/* Desktop Sidebar Navigation (260px) */}
-        <aside className="hidden md:flex w-64 shrink-0 flex-col justify-between border-r border-neutral-200 bg-white p-4">
+        {/* Desktop Sidebar Navigation (272px) */}
+        <aside className="hidden md:flex w-68 shrink-0 flex-col justify-between border-r border-neutral-200 bg-white p-4">
           <div className="space-y-6">
             {/* Active Conversation Switcher */}
             {conversations.length > 0 && (

@@ -254,12 +254,20 @@ export const PersonalMentionsView: React.FC<PersonalMentionsViewProps> = ({
                       ? 'Task Assigned to You'
                       : m.type === 'direct_question'
                       ? 'Question Directed at You'
+                      : m.type === 'requires_response'
+                      ? 'Requires Your Response'
                       : m.type === 'direct_mention'
                       ? 'Direct Name Mention'
                       : m.type === 'reply_to_user'
                       ? 'Reply to Your Message'
                       : `Followed Topic: "${m.matchedTerm}"`}
                   </span>
+                  {m.requiresResponse && (
+                    <>
+                      <span aria-hidden="true" className="text-neutral-300">·</span>
+                      <span className="font-semibold text-amber-700">Requires Response</span>
+                    </>
+                  )}
                   <span aria-hidden="true" className="text-neutral-300">·</span>
                   <span className="font-semibold text-neutral-900">{m.sender}</span>
                   <span aria-hidden="true" className="text-neutral-300">·</span>

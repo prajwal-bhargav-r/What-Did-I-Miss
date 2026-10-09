@@ -95,10 +95,29 @@ export const SourceContextModal: React.FC<SourceContextModalProps> = ({
                   {msg.content}
                 </p>
 
+                {msg.changeSummary && (
+                  <p className="mt-2 text-xs font-medium text-neutral-900 bg-neutral-100 border border-neutral-200 rounded px-2.5 py-1">
+                    Schedule / Decision Change: {msg.changeSummary}
+                  </p>
+                )}
+
+                {msg.supersededByIndex && (
+                  <p className="mt-2 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded px-2.5 py-1">
+                    Note: This earlier statement was superseded by message #{msg.supersededByIndex}.
+                  </p>
+                )}
+
                 {isTarget && msg.priorityReasons.length > 0 && (
-                  <div className="mt-3 border-t border-neutral-200 pt-2.5 text-xs text-neutral-700">
-                    <span className="font-semibold text-neutral-950">Why it was categorized ({msg.priority.toUpperCase()}): </span>
-                    <span>{msg.priorityReasons.join(' · ')}</span>
+                  <div className="mt-3 border-t border-neutral-200 pt-2.5 text-xs text-neutral-700 space-y-1">
+                    <div>
+                      <span className="font-semibold text-neutral-950">Why it was categorized ({msg.priority.toUpperCase()}): </span>
+                      <span>{msg.priorityReasons.join(' · ')}</span>
+                    </div>
+                    {msg.requiresResponse && (
+                      <div className="font-semibold text-amber-800">
+                        Status: Requires a response or confirmation
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

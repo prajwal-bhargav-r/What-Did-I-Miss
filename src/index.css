@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+@theme {
+  --text-xs: 0.84375rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.9375rem;
+  --text-sm--line-height: 1.55;
+  --text-base: 1.0625rem;
+  --text-base--line-height: 1.6;
+  --text-lg: 1.1875rem;
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.4;
+  --text-2xl: 1.625rem;
+  --text-2xl--line-height: 1.3;
+  --text-3xl: 2rem;
+  --text-3xl--line-height: 1.2;
+}
+
 @layer base {
   :root {
     --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -7,8 +24,14 @@
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
   }
 
+  html {
+    font-size: 16.5px;
+  }
+
   body {
     font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    line-height: 1.55;
     background-color: #FAFAFA;
     color: #09090B;
     -webkit-font-smoothing: antialiased;

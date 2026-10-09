@@ -38,8 +38,8 @@ const HIGH_URGENCY_PATTERNS = [
   /\b(production down|outage|blocker|hotfix|rollback|deployment freeze)\b/i,
 ];
 
-const SCHEDULE_CHANGE_PATTERNS = [
-  /\b(rescheduled|postponed|moved from|moved to|shifted to|pushed back|brought forward|changed from|changed to|new time|new date|new room|new venue|instead of)\b/i,
+const SCHEDULE_OR_DECISION_CHANGE_PATTERNS = [
+  /\b(rescheduled|postponed|moved from|moved to|shifted to|pushed back|brought forward|changed from|changed to|new time|new date|new room|new venue|instead of|rather than|switched to|switch to|decision change|decision update|scratch that|no longer)\b/i,
 ];
 
 const ANNOUNCEMENT_PATTERNS = [
@@ -48,11 +48,11 @@ const ANNOUNCEMENT_PATTERNS = [
 ];
 
 const DECISION_PATTERNS = [
-  /\b(we decided|it's decided|agreed|finalized|locked in|confirmed that|we'll go with|we will go with|let's stick with|consensus is|decision:|approved)\b/i,
+  /\b(we decided|it's decided|agreed|finalized|locked in|confirmed that|we'll go with|we will go with|let's stick with|consensus is|decision:|decision change:|decision update:|approved|switched to|switch to)\b/i,
 ];
 
 const TASK_PATTERNS = [
-  /\b(please submit|please complete|please send|please upload|please review|please prepare|please update|please check|please bring|please fill|please confirm|please share)\b/i,
+  /\b(please submit|please complete|please send|please upload|please review|please prepare|please update|please check|please bring|please fill|please confirm|please share|please refactor)\b/i,
   /\b(need to submit|needs to submit|need to finish|need to prepare|need someone to|have to submit|must submit|must complete|must share|make sure to|don't forget to|remember to)\b/i,
   /\b(can you|could you|will handle|is responsible for|assigned to|take care of|working on|i'll handle|i will handle|i'll submit|i will submit|i'll prepare|i will prepare|i'll update|i will update|action item|todo|to-do)\b/i,
 ];
@@ -97,8 +97,66 @@ function extractTimeInText(text: string): string | null {
   return null;
 }
 
+/**
+ * Extracts explicit inline schedule/decision change summaries when present
+ * e.g., "from Oct 14 to Oct 16", "Auditorium B instead of Room 204", "Instead of REST over JSON, we decided to switch to gRPC"
+ */
+function extractInlineChangeSummary(text: string): string | null {
+  const notes: string[] = [];
+
+  const fromToMatch = text.match(
+    /\b(?:rescheduled|moved|changed|shifted)\s+from\s+([^,.!\n]+?)\s+to\s+([^,.!\n]+?)(?:[,.!\n]|$)/i
+  );
+  if (fromToMatch) {
+    notes.push(`Changed from ${fromToMatch[1].trim()} → ${fromToMatch[2].trim()}`);
+  }
+
+  const insteadOfPrefix = text.match(
+    /\binstead of\s+([^,.\n]+?),\s*([^.\n]+)/i
+  );
+  if (insteadOfPrefix) {
+    notes.push(`Replaces "${insteadOfPrefix[1].trim()}" → ${insteadOfPrefix[2].trim()}`);
+  }
+
+  const insteadOfSuffix = text.match(
+    /\b(?:moved to|changed to|switched to|switch to|in)\s+([^,.\n]+?)\s+instead of\s+([^,.\n]+?)(?:[,.!\n]|$)/i
+  );
+  if (insteadOfSuffix && !insteadOfPrefix) {
+    notes.push(`Changed from ${insteadOfSuffix[2].trim()} → ${insteadOfSuffix[1].trim()}`);
+  }
+
+  return notes.length > 0 ? notes.join(' · ') : null;
+}
+
+/**
+ * Extracts a clean, concise task title from a conversational message while keeping full fidelity
+ */
+function extractConciseTaskTitle(rawContent: string): string {
+  let clean = rawContent
+    .replace(/^@[A-Za-z0-9_.\s-]+[,!:\s]*/i, '')
+    .replace(/^(thanks|thank you|got it|ok|okay|sure|hey|hi|hello|also|and)[,!.\s-]*/i, '')
+    .replace(/^@[A-Za-z0-9_.\s-]+[,!:\s]*/i, '')
+    .replace(/^(reminder for everyone|also reminder for everyone|important update|urgent|fyi|note)[:,\s-]*/i, '')
+    .replace(/^(?:[A-Z][a-z]+[,:\s]+)?(?:can you|could you|would you)\s+(?:please\s+)?/i, '')
+    .replace(/^(?:please|kindly)\s+/i, '')
+    .replace(/^(?:i'll|i will|i am going to|i can)\s+/i, '')
+    .replace(/^(?:we need someone to|we need to|everyone must|all services must)\s+/i, '')
+    .trim();
+
+  // Capitalize first letter
+  if (clean.length > 0) {
+    clean = clean.charAt(0).toUpperCase() + clean.slice(1);
+  }
+
+  const firstClause = clean.split(/(?<=[.!?])\s+|\s+so\s+that\s+|\s+so\s+the\s+|\n/i)[0].trim();
+  if (firstClause.length >= 12 && firstClause.length <= 105) {
+    return firstClause.replace(/[.!?]+$/, '');
+  }
+  return clean.slice(0, 100);
+}
+
 function classifyDeadlineCategory(text: string): DeadlineCategory {
-  if (SCHEDULE_CHANGE_PATTERNS.some((p) => p.test(text))) return 'schedule_change';
+  if (SCHEDULE_OR_DECISION_CHANGE_PATTERNS.some((p) => p.test(text))) return 'schedule_change';
   if (/\b(exam|midterm|final|quiz|viva|test|assessment)\b/i.test(text)) return 'exam';
   if (/\b(assignment|homework|hw|problem set|lab report|worksheet|essay)\b/i.test(text)) return 'assignment';
   if (/\b(register|registration|sign up|signup|enroll|rsvp|form)\b/i.test(text)) return 'registration';
@@ -109,21 +167,35 @@ function classifyDeadlineCategory(text: string): DeadlineCategory {
 
 function summarizeDeadlineTitle(text: string, threadContext: string | null, category: DeadlineCategory): string {
   const clean = text
-    .replace(/^(hey everyone|hi all|quick update|heads up|reminder|urgent|important|fyi|also|note)[:,\s-]*/i, '')
+    .replace(/^(hey everyone|hi all|quick update|heads up|reminder|also reminder for everyone|urgent|important announcement|important update|fyi|also|note)[:,\s-]*/i, '')
     .trim();
 
-  const firstSentence = clean.split(/(?<=[.!?])\s+|\n/)[0].trim();
-  if (firstSentence.length >= 10 && firstSentence.length <= 95) {
-    return firstSentence;
+  const sentences = clean
+    .split(/(?<=[.!?])\s+|\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // Pick the sentence that actually contains the event/date rather than a generic preamble like "Prof. Arvind asked me to share an official schedule update."
+  const bestSentence =
+    sentences.find((s) =>
+      /\b(exam|midterm|quiz|assignment|due|deadline|rescheduled|moved|meeting|review|ceremony|migration|freeze|runbook|inventory|rollout|\d{1,2})\b/i.test(
+        s
+      ) && !/asked me to share/i.test(s)
+    ) ||
+    sentences[0] ||
+    clean;
+
+  if (bestSentence.length >= 10 && bestSentence.length <= 105) {
+    return bestSentence;
   }
-  if (firstSentence.length > 95) {
-    return firstSentence.slice(0, 92).trim() + '...';
+  if (bestSentence.length > 105) {
+    return bestSentence.slice(0, 102).trim() + '...';
   }
-  if (threadContext && firstSentence.length < 22) {
-    return `${threadContext.slice(0, 55)}: ${firstSentence}`;
+  if (threadContext && bestSentence.length < 22) {
+    return `${threadContext.slice(0, 55)}: ${bestSentence}`;
   }
   const catLabel = category.replace('_', ' ');
-  return firstSentence || `Scheduled ${catLabel}`;
+  return bestSentence || `Scheduled ${catLabel}`;
 }
 
 export function extractDeadlinesForMessage(
@@ -136,7 +208,7 @@ export function extractDeadlinesForMessage(
 
   const text = msg.content;
   const hasEventSignal =
-    /\b(due|deadline|submit|submission|exam|midterm|quiz|test|assignment|project|meeting|sync|call|demo|launch|register|registration|rescheduled|moved|postponed|scheduled|session|presentation|viva|lab|workshop|review|ceremony|freeze|sign off|confirm)\b/i.test(
+    /\b(due|deadline|submit|submission|exam|midterm|quiz|test|assignment|project|meeting|sync|call|demo|launch|register|registration|rescheduled|moved|postponed|scheduled|session|presentation|viva|lab|workshop|review|ceremony|freeze|sign off|confirm|rollout)\b/i.test(
       text
     ) ||
     (msg.threadContext &&
@@ -154,16 +226,14 @@ export function extractDeadlinesForMessage(
     msg.threadContext ? `${text} ${msg.threadContext}` : text
   );
   const title = summarizeDeadlineTitle(text, msg.threadContext, category);
+  const previousScheduleNote = extractInlineChangeSummary(text);
   const baseDate = msg.hasExplicitDate && msg.timestampISO ? new Date(msg.timestampISO) : null;
   const baseYear = baseDate ? baseDate.getFullYear() : 2026;
 
-  // 1. Check Explicit Named Month Dates: e.g. "Oct 16", "October 16th, 2026", "16 Oct"
   const reMonthDay =
     /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b/gi;
   const reDayMonth =
     /\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?(?:,?\s*(\d{4}))?\b/gi;
-
-  // Also check explicit numeric dates inside message text: e.g., "2026-10-25" or "10/25/2026"
   const reNumericDate = /\b(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})\/(\d{1,2})\/(\d{2,4}))\b/g;
 
   const matchedRawExpressions = new Set<string>();
@@ -179,8 +249,9 @@ export function extractDeadlinesForMessage(
     const year = m[3] ? parseInt(m[3], 10) : baseYear;
 
     if (mIdx !== undefined && day >= 1 && day <= 31) {
-      const checkBefore = text.slice(Math.max(0, m.index - 18), m.index).toLowerCase();
-      if (/\b(moved from|changed from|instead of|was on)\s*$/i.test(checkBefore)) {
+      const checkBefore = text.slice(Math.max(0, m.index - 22), m.index).toLowerCase();
+      // Skip the old cancelled date when preceded by "from", "instead of", "was on"
+      if (/\b(moved from|rescheduled from|changed from|instead of|was on)\s*$/i.test(checkBefore)) {
         continue;
       }
 
@@ -198,6 +269,7 @@ export function extractDeadlinesForMessage(
         timeString,
         resolutionType: 'explicit',
         resolutionExplanation: `Explicit calendar date ("${rawExpr}") stated directly in message #${msg.index}.`,
+        previousScheduleNote,
         userConfirmedDate: null,
         isConfirmed: true,
         priority: category === 'exam' || category === 'schedule_change' ? 'high' : 'medium',
@@ -218,8 +290,8 @@ export function extractDeadlinesForMessage(
     const year = m[3] ? parseInt(m[3], 10) : baseYear;
 
     if (mIdx !== undefined && day >= 1 && day <= 31) {
-      const checkBefore = text.slice(Math.max(0, m.index - 18), m.index).toLowerCase();
-      if (/\b(moved from|changed from|instead of|was on)\s*$/i.test(checkBefore)) {
+      const checkBefore = text.slice(Math.max(0, m.index - 22), m.index).toLowerCase();
+      if (/\b(moved from|rescheduled from|changed from|instead of|was on)\s*$/i.test(checkBefore)) {
         continue;
       }
 
@@ -237,6 +309,7 @@ export function extractDeadlinesForMessage(
         timeString,
         resolutionType: 'explicit',
         resolutionExplanation: `Explicit calendar date ("${rawExpr}") stated directly in message #${msg.index}.`,
+        previousScheduleNote,
         userConfirmedDate: null,
         isConfirmed: true,
         priority: category === 'exam' || category === 'schedule_change' ? 'high' : 'medium',
@@ -288,6 +361,7 @@ export function extractDeadlinesForMessage(
         timeString,
         resolutionType: 'explicit',
         resolutionExplanation: `Explicit calendar date ("${rawExpr}") stated directly in message #${msg.index}.`,
+        previousScheduleNote,
         userConfirmedDate: null,
         isConfirmed: true,
         priority: category === 'exam' || category === 'schedule_change' ? 'high' : 'medium',
@@ -300,7 +374,6 @@ export function extractDeadlinesForMessage(
 
   // 2. Check Relative Date Expressions if no explicit date was already extracted from this message
   if (results.length === 0) {
-    // Check ambiguous multi-day expressions first: e.g. "Monday or Tuesday", "sometime next week"
     const reEitherDay =
       /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+or\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
     const mEither = text.match(reEitherDay);
@@ -343,6 +416,7 @@ export function extractDeadlinesForMessage(
         timeString,
         resolutionType: 'ambiguous',
         resolutionExplanation: `Message mentions "${rawExpr}" without locking in a single day. Please confirm the exact date.`,
+        previousScheduleNote,
         candidateOptions: options,
         userConfirmedDate: null,
         isConfirmed: false,
@@ -354,7 +428,6 @@ export function extractDeadlinesForMessage(
       return results;
     }
 
-    // Check "next [DayOfWeek]" - inherently ambiguous in natural conversation!
     const reNextDow = /\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
     const mNextDow = text.match(reNextDow);
     if (mNextDow) {
@@ -389,6 +462,7 @@ export function extractDeadlinesForMessage(
           timeString,
           resolutionType: 'ambiguous',
           resolutionExplanation: `"${rawExpr}" sent on ${formatHumanDate(baseDate)} can mean either the upcoming ${mNextDow[1]} (${formatHumanDate(closestDate)}) or the following week's ${mNextDow[1]} (${formatHumanDate(followingWeekDate)}). Confirm below.`,
+          previousScheduleNote,
           candidateOptions: [opt1, opt2],
           userConfirmedDate: null,
           isConfirmed: false,
@@ -411,6 +485,7 @@ export function extractDeadlinesForMessage(
           timeString,
           resolutionType: 'ambiguous',
           resolutionExplanation: `Cannot automatically resolve "${rawExpr}" because message #${msg.index} does not have a full calendar timestamp.`,
+          previousScheduleNote,
           candidateOptions: [],
           userConfirmedDate: null,
           isConfirmed: false,
@@ -423,7 +498,6 @@ export function extractDeadlinesForMessage(
       return results;
     }
 
-    // Check "tomorrow", "today", "tonight", "this [DayOfWeek]", "by/before/on [DayOfWeek]", "in N days"
     const reRelativeSimple =
       /\b(day after tomorrow|tomorrow|tonight|today|this\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|(?:by|before|on|for)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|in\s+(\d{1,2})\s+days?)\b/i;
     const mRel = text.match(reRelativeSimple);
@@ -446,6 +520,7 @@ export function extractDeadlinesForMessage(
           timeString,
           resolutionType: 'ambiguous',
           resolutionExplanation: `Message mentions relative date "${rawExpr}", but message #${msg.index} lacks a calendar date timestamp to anchor the calculation.`,
+          previousScheduleNote,
           candidateOptions: [],
           userConfirmedDate: null,
           isConfirmed: false,
@@ -489,6 +564,7 @@ export function extractDeadlinesForMessage(
           timeString,
           resolutionType: 'relative_resolved',
           resolutionExplanation: `Resolved "${rawExpr}" relative to message timestamp (${formatHumanDate(baseDate)}) → ${formatHumanDate(resolved)}.`,
+          previousScheduleNote,
           userConfirmedDate: null,
           isConfirmed: true,
           priority:
@@ -537,12 +613,40 @@ function detectAssignee(
 
     const escaped = firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const directAssignRe = new RegExp(
-      `(?:^|\\b)${escaped}(?:[,:\\s]+(?:can you|could you|please|will|needs? to|should|is handling|to handle)|\\s+will\\s+(?:handle|prepare|submit|take|lead|upload|send))`,
+      `(?:^|\\b)${escaped}(?:[,:\\s]+(?:can you|could you|please|will|needs? to|should|is handling|to handle)|\\s+will\\s+(?:handle|prepare|submit|take|lead|upload|send|update|review))`,
       'i'
     );
     if (directAssignRe.test(text)) {
       return {
         assignee: participant,
+        confidence: 'explicit',
+      };
+    }
+  }
+
+  // 2b. Check explicit named assignee even if that person hasn't sent a message in the chat
+  const explicitAssignedToMatch = text.match(
+    /\b(?:assigned to|owner\s*:|task for|handled by)\s+([A-Z][a-z]{2,20}(?:\s+[A-Z][a-z]{2,20})?)\b/
+  );
+  if (explicitAssignedToMatch) {
+    return {
+      assignee: explicitAssignedToMatch[1].trim(),
+      confidence: 'explicit',
+    };
+  }
+
+  const leadingVocativeMatch = text.match(
+    /^([A-Z][a-z]{2,18})[,:]\s+(?:please|can you|could you|would you|make sure to)\b/
+  );
+  if (leadingVocativeMatch) {
+    const candidateName = leadingVocativeMatch[1];
+    const NON_NAMES = new Set([
+      'hey', 'hi', 'hello', 'also', 'team', 'guys', 'everyone', 'urgent',
+      'important', 'reminder', 'note', 'quick', 'agreed', 'yes', 'no', 'thanks',
+    ]);
+    if (!NON_NAMES.has(candidateName.toLowerCase())) {
+      return {
+        assignee: candidateName,
         confidence: 'explicit',
       };
     }
@@ -564,7 +668,8 @@ function detectAssignee(
   if (
     /\b(everyone|all students|all services|each group|each team member|everybody|all of you|class)\b.*\b(must|should|need to|please|submit|complete|bring|register|fill|share)\b/i.test(
       text
-    )
+    ) ||
+    /\breminder for everyone:?\b.*\b(is due|must|submit|complete)\b/i.test(text)
   ) {
     return {
       assignee: 'Everyone / All Members',
@@ -603,7 +708,7 @@ export function analyzeConversationLocal(
     .sort((a, b) => b.count - a.count);
   const participantNames = participants.map((p) => p.name);
 
-  // Step 1: Build thread context across consecutive / proximate messages
+  // Step 1: Build thread context and detect cross-message conflicts / decision revisions
   let activeTopicContext: string | null = null;
   let activeTopicIndex = -10;
 
@@ -612,13 +717,72 @@ export function analyzeConversationLocal(
     if (msg.isSystem || msg.isMediaOmitted) continue;
 
     const topicIntroMatch = msg.content.match(
-      /\b(midterm|final exam|quiz|assignment\s*\d*|project\s*\w*|milestone|api migration|database|deployment|presentation|hackathon|venue|registration|meeting|lecture|lab\s*\d*)\b/i
+      /\b(midterm|final exam|quiz|assignment\s*\d*|project\s*\w*|milestone|rpc|transport|api migration|database|deployment|rollout|presentation|hackathon|venue|opening ceremony|registration|meeting|lecture|lab\s*\d*)\b/i
     );
     if (topicIntroMatch && msg.content.length > 25) {
       activeTopicContext = topicIntroMatch[0];
       activeTopicIndex = i;
     } else if (i - activeTopicIndex <= 3 && activeTopicContext) {
       msg.threadContext = activeTopicContext;
+    }
+
+    // Check inline change summary (e.g. "from Oct 14 to Oct 16", "instead of REST over JSON")
+    const inlineChange = extractInlineChangeSummary(msg.content);
+    if (inlineChange) {
+      msg.changeSummary = inlineChange;
+    }
+
+    // Check if this message revises or conflicts with an earlier plan/decision in the conversation
+    if (SCHEDULE_OR_DECISION_CHANGE_PATTERNS.some((re) => re.test(msg.content))) {
+      const oldPhraseMatch =
+        msg.content.match(/\b(?:rescheduled|moved|changed|shifted)\s+from\s+([^,.!\n]+?)\s+to\s+/i) ||
+        msg.content.match(/\binstead of\s+([^,.\n]+?)(?:[,.!\n]|$)/i);
+      const oldPhraseLower = oldPhraseMatch ? oldPhraseMatch[1].trim().toLowerCase() : null;
+
+      for (let prevIdx = i - 1; prevIdx >= 0; prevIdx--) {
+        const prevMsg = messages[prevIdx];
+        if (
+          prevMsg.isSystem ||
+          prevMsg.isDuplicate ||
+          prevMsg.isJokeOrHypothetical ||
+          prevMsg.content.includes('?')
+        ) {
+          continue;
+        }
+
+        const prevLower = prevMsg.content.toLowerCase();
+        const currLower = msg.content.toLowerCase();
+
+        // Check shared substantive keywords between earlier plan and current change
+        const sharedSubjects = [
+          'rest', 'json', 'rpc', 'transport', 'midterm', 'exam', 'quiz', 'assignment',
+          'rollout', 'release', 'deployment', 'meeting', 'sync', 'ceremony', 'hall',
+          'venue', 'room', 'review', 'demo', 'deadline', 'database', 'migration',
+        ].filter((kw) => prevLower.includes(kw) && currLower.includes(kw));
+
+        const matchesExplicitEarlierPlan =
+          sharedSubjects.length > 0 &&
+          /\b(initially|originally|earlier plan|previous plan|planned|decided|agreed|was scheduled|is scheduled|will be on|is on)\b/i.test(
+            prevMsg.content
+          );
+
+        const matchesReplacedPhrase =
+          Boolean(oldPhraseLower && oldPhraseLower.length >= 4 && prevLower.includes(oldPhraseLower)) &&
+          sharedSubjects.length > 0;
+
+        if (matchesExplicitEarlierPlan || matchesReplacedPhrase) {
+          msg.supersedesMessageId = prevMsg.id;
+          msg.supersedesIndex = prevMsg.index;
+          prevMsg.supersededByMessageId = msg.id;
+          prevMsg.supersededByIndex = msg.index;
+          if (!msg.changeSummary) {
+            msg.changeSummary = `Revises earlier plan in #${prevMsg.index}`;
+          } else if (!msg.changeSummary.includes(`#${prevMsg.index}`)) {
+            msg.changeSummary = `${msg.changeSummary} (Supersedes #${prevMsg.index})`;
+          }
+          break;
+        }
+      }
     }
   }
 
@@ -700,6 +864,19 @@ export function analyzeConversationLocal(
     const reasons: string[] = [];
     const categories = new Set<MessageCategory>();
 
+    // If this message was superseded by a later message, note it clearly and avoid treating it as active high priority
+    if (msg.supersededByIndex) {
+      reasons.push(
+        `Earlier plan/statement superseded by updated decision in message #${msg.supersededByIndex}`
+      );
+      msg.priority = 'medium';
+      msg.priorityScore = 40;
+      msg.priorityReasons = reasons;
+      msg.categories = ['decision'];
+      continue;
+    }
+
+    // Extract deadlines for this message
     const msgDeadlines = extractDeadlinesForMessage(msg, conversationId);
     if (msgDeadlines.length > 0) {
       allDeadlines.push(...msgDeadlines);
@@ -711,17 +888,22 @@ export function analyzeConversationLocal(
       );
     }
 
-    if (SCHEDULE_CHANGE_PATTERNS.some((re) => re.test(msg.content))) {
+    // Schedule / Decision changes
+    if (SCHEDULE_OR_DECISION_CHANGE_PATTERNS.some((re) => re.test(msg.content))) {
       categories.add('schedule_change');
       categories.add('announcement');
       score += 40;
-      reasons.push('Announces a schedule, room, or deadline change affecting plans');
+      reasons.push(
+        msg.changeSummary
+          ? `Announces schedule or decision change (${msg.changeSummary})`
+          : 'Announces a schedule, room, or decision change affecting previous plans'
+      );
     }
 
     if (HIGH_URGENCY_PATTERNS.some((re) => re.test(msg.content))) {
       categories.add('announcement');
       score += 35;
-      if (!reasons.some((r) => r.includes('schedule'))) {
+      if (!reasons.some((r) => r.includes('schedule') || r.includes('change'))) {
         reasons.push('Contains high-urgency announcement or imminent deadline instructions');
       }
     } else if (
@@ -738,7 +920,11 @@ export function analyzeConversationLocal(
     if (DECISION_PATTERNS.some((re) => re.test(msg.content))) {
       categories.add('decision');
       score += 28;
-      reasons.push('Records an explicit group decision or agreed course of action');
+      reasons.push(
+        msg.supersedesIndex
+          ? `Records an updated group decision superseding earlier message #${msg.supersedesIndex}`
+          : 'Records an explicit group decision or agreed course of action'
+      );
     }
 
     const isTaskCandidate =
@@ -755,60 +941,78 @@ export function analyzeConversationLocal(
       const { assignee, confidence } = detectAssignee(msg, participantNames);
       const linkedDeadline = msgDeadlines[0];
 
-      let deadlineStr = 'Not specified';
-      let deadlineConf: ActionItem['deadlineConfidence'] = 'not_specified';
-      if (linkedDeadline) {
-        deadlineStr = linkedDeadline.displayDate;
-        deadlineConf = linkedDeadline.resolutionType;
+      // Check if this message is an immediate self-assigned acceptance of the task assigned in message (i - 1)
+      // e.g. #18: "Kabir, can you please refactor the heartbeat service by Oct 18?" -> #19: "I'll handle the heartbeat service refactoring..."
+      const prevTask = allActionItems[allActionItems.length - 1];
+      const isAcceptanceOfPrevTask =
+        prevTask &&
+        prevTask.messageIndex === msg.index - 1 &&
+        confidence === 'inferred_sender' &&
+        prevTask.assignee.toLowerCase().includes(msg.sender.split(/\s+/)[0].toLowerCase());
+
+      if (isAcceptanceOfPrevTask && prevTask) {
+        prevTask.explanation = `${prevTask.explanation} Accepted and confirmed by ${msg.sender} in #${msg.index}.`;
+        reasons.push(`Confirms acceptance of task assigned in #${prevTask.messageIndex}`);
       } else {
-        const inlineTime = extractTimeInText(msg.content);
-        if (inlineTime) {
-          deadlineStr = inlineTime;
-          deadlineConf = 'explicit';
+        let deadlineStr = 'Not specified';
+        let deadlineConf: ActionItem['deadlineConfidence'] = 'not_specified';
+        if (linkedDeadline) {
+          deadlineStr = linkedDeadline.displayDate;
+          deadlineConf = linkedDeadline.resolutionType;
+        } else {
+          const inlineTime = extractTimeInText(msg.content);
+          if (inlineTime) {
+            deadlineStr = inlineTime;
+            deadlineConf = 'explicit';
+          }
         }
-      }
 
-      const taskPriority: PriorityLevel =
-        score >= 65 || HIGH_URGENCY_PATTERNS.some((re) => re.test(msg.content))
-          ? 'high'
-          : 'medium';
+        const taskPriority: PriorityLevel =
+          score >= 65 || HIGH_URGENCY_PATTERNS.some((re) => re.test(msg.content))
+            ? 'high'
+            : 'medium';
 
-      score += 25;
-      reasons.push(
-        confidence === 'explicit'
-          ? `Actionable task assigned to ${assignee}`
-          : 'Contains actionable task or responsibility'
-      );
-
-      allActionItems.push({
-        id: `task-${msg.id}`,
-        conversationId,
-        messageId: msg.id,
-        messageIndex: msg.index,
-        description: msg.content.replace(/^@[A-Za-z0-9_.\s-]+[,:\s]*/, '').trim(),
-        assignee,
-        assigneeConfidence: confidence,
-        deadline: deadlineStr,
-        deadlineConfidence: deadlineConf,
-        priority: taskPriority,
-        status: 'pending',
-        sender: msg.sender,
-        timestampRaw: msg.timestampRaw,
-        originalContent: msg.content,
-        explanation:
+        score += 25;
+        reasons.push(
           confidence === 'explicit'
-            ? `Explicitly assigned to ${assignee} in message #${msg.index}.`
+            ? `Actionable task explicitly assigned to ${assignee}`
             : confidence === 'inferred_sender'
-            ? `${msg.sender} volunteered to take this action in message #${msg.index}.`
-            : `Task mentioned in message #${msg.index}; exact individual assignee was not explicitly specified.`,
-      });
+            ? `Self-assigned task volunteered by ${msg.sender}`
+            : 'Contains actionable task (owner not explicitly stated)'
+        );
+
+        allActionItems.push({
+          id: `task-${msg.id}`,
+          conversationId,
+          messageId: msg.id,
+          messageIndex: msg.index,
+          conciseTitle: extractConciseTaskTitle(msg.content),
+          description: msg.content.replace(/^@[A-Za-z0-9_.\s-]+[,:\s]*/, '').trim(),
+          assignee,
+          assigneeConfidence: confidence,
+          deadline: deadlineStr,
+          deadlineConfidence: deadlineConf,
+          priority: taskPriority,
+          status: 'pending',
+          sender: msg.sender,
+          timestampRaw: msg.timestampRaw,
+          originalContent: msg.content,
+          explanation:
+            confidence === 'explicit'
+              ? `Explicitly assigned to ${assignee} in message #${msg.index}.`
+              : confidence === 'inferred_sender'
+              ? `${msg.sender} volunteered to take this action in message #${msg.index}.`
+              : `Task mentioned in message #${msg.index}; exact individual owner was not explicitly specified.`,
+        });
+      }
     }
 
     if (msg.content.includes('?') && msg.content.length > 15) {
       categories.add('question');
+      msg.requiresResponse = true;
       if (score < 40) {
-        score += 15;
-        reasons.push('Contains a question directed to the group');
+        score += 18;
+        reasons.push('Direct question requiring a response from the group');
       }
     }
 
@@ -827,16 +1031,21 @@ export function analyzeConversationLocal(
         const isQuestionToUser =
           msg.content.includes('?') && !isDirectiveQuestion;
         const isTaskToUser = categories.has('action_item');
+        const needsReply = isQuestionToUser || isTaskToUser || /\b(please confirm|sign off|let me know|did the)\b/i.test(msg.content);
+        if (needsReply) msg.requiresResponse = true;
+
         const mentionType: PersonalMention['type'] = isTaskToUser
           ? 'assigned_task'
           : isQuestionToUser
           ? 'direct_question'
+          : needsReply
+          ? 'requires_response'
           : 'direct_mention';
 
         const reasonText = isTaskToUser
-          ? `Directly assigns a task to you ("${matchedName}")`
+          ? `Explicitly assigns a task to you ("${matchedName}") — requires action`
           : isQuestionToUser
-          ? `Direct question addressed to you ("${matchedName}")`
+          ? `Direct question addressed to you ("${matchedName}") — requires response`
           : `Directly mentions your name/alias ("${matchedName}")`;
 
         reasons.push(reasonText);
@@ -848,6 +1057,7 @@ export function analyzeConversationLocal(
           type: mentionType,
           matchedTerm: matchedName,
           reason: reasonText,
+          requiresResponse: needsReply,
           priority: 'high',
           sender: msg.sender,
           timestampRaw: msg.timestampRaw,
@@ -866,6 +1076,7 @@ export function analyzeConversationLocal(
           type: 'reply_to_user',
           matchedTerm: 'Reply to your message',
           reason: reasonText,
+          requiresResponse: msg.content.includes('?'),
           priority: 'medium',
           sender: msg.sender,
           timestampRaw: msg.timestampRaw,
@@ -887,6 +1098,7 @@ export function analyzeConversationLocal(
           type: 'followed_topic',
           matchedTerm: matchedTopic,
           reason: reasonText,
+          requiresResponse: false,
           priority: score >= 65 ? 'high' : 'medium',
           sender: msg.sender,
           timestampRaw: msg.timestampRaw,
@@ -907,7 +1119,7 @@ export function analyzeConversationLocal(
     } else {
       priority = 'low';
       if (reasons.length === 0) {
-        reasons.push('General conversational message without urgent deadlines or tasks');
+        reasons.push('Low-priority casual conversation without urgent deadlines or tasks');
       }
     }
 
@@ -926,7 +1138,7 @@ export function analyzeConversationLocal(
     return a.messageIndex - b.messageIndex;
   });
 
-  const summary = buildGroundedSummary(messages, allDeadlines, allActionItems);
+  const summary = buildGroundedSummary(messages, allDeadlines, allActionItems, allMentions);
 
   const validDates = messages
     .filter((m) => m.hasExplicitDate && m.timestampISO)
@@ -974,24 +1186,29 @@ export function analyzeConversationLocal(
 function buildGroundedSummary(
   messages: ParsedMessage[],
   deadlines: ExtractedDeadline[],
-  actionItems: ActionItem[]
+  actionItems: ActionItem[],
+  personalMentions: PersonalMention[]
 ): ConversationSummary {
   const activeMessages = messages.filter(
     (m) => !m.isSystem && !m.isMediaOmitted && !m.isDuplicate && !m.isJokeOrHypothetical
   );
 
-  // 1. Extract top announcements
+  // 1. Extract top announcements (excluding superseded messages)
   const announcements: SummaryHighlight[] = activeMessages
     .filter(
       (m) =>
-        m.categories.includes('announcement') ||
-        m.categories.includes('schedule_change') ||
-        m.priority === 'high'
+        !m.supersededByIndex &&
+        (m.categories.includes('announcement') ||
+          m.categories.includes('schedule_change') ||
+          m.priority === 'high')
     )
     .slice(0, 8)
     .map((m) => ({
       id: `ann-${m.id}`,
       text: m.content,
+      changeSummary: m.changeSummary || null,
+      confidence: 'explicit',
+      supersedesIndex: m.supersedesIndex || null,
       sender: m.sender,
       timestampRaw: m.timestampRaw,
       messageId: m.id,
@@ -1000,21 +1217,31 @@ function buildGroundedSummary(
       reason: m.priorityReasons[0] || 'Important update',
     }));
 
-  // 2. Extract decisions
+  // 2. Extract decisions & changes to previous decisions
   const decisions: SummaryHighlight[] = activeMessages
-    .filter((m) => m.categories.includes('decision'))
+    .filter((m) => m.categories.includes('decision') || Boolean(m.changeSummary))
     .map((m) => ({
       id: `dec-${m.id}`,
       text: m.content,
+      changeSummary: m.changeSummary || null,
+      confidence: 'explicit',
+      supersedesIndex: m.supersedesIndex || null,
+      supersededByIndex: m.supersededByIndex || null,
       sender: m.sender,
       timestampRaw: m.timestampRaw,
       messageId: m.id,
       messageIndex: m.index,
       priority: m.priority,
-      reason: 'Group consensus or explicit decision',
+      reason: m.supersededByIndex
+        ? `Superseded by later decision in #${m.supersededByIndex}`
+        : m.supersedesIndex
+        ? `Revises earlier plan from #${m.supersedesIndex}`
+        : m.changeSummary
+        ? `Schedule/Decision Revision: ${m.changeSummary}`
+        : 'Explicit group decision',
     }));
 
-  // 3. Detect Unanswered Questions
+  // 3. Detect Unanswered Questions / Messages Requiring Response
   const unansweredQuestions: UnansweredQuestion[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
@@ -1077,13 +1304,15 @@ function buildGroundedSummary(
         messageIndex: m.index,
         contextNote:
           i === messages.length - 1
-            ? 'Asked at the end of the conversation with no subsequent messages.'
-            : 'No direct answer or resolution detected in the following messages.',
+            ? 'Asked at the end of the conversation — awaiting response.'
+            : 'No direct answer or resolution detected in subsequent messages.',
       });
+    } else {
+      m.requiresResponse = false;
     }
   }
 
-  // 4. Cluster main topics discussed (Domain patterns + Dynamic TF-IDF keyword clustering for any custom chat)
+  // 4. Cluster main topics discussed
   const TOPIC_DEFINITIONS: { id: string; label: string; regex: RegExp }[] = [
     {
       id: 'exams',
@@ -1134,7 +1363,6 @@ function buildGroundedSummary(
     }
   }
 
-  // Dynamic Topic Discovery if custom conversation has few/no domain matches
   if (mainTopics.length < 2 && activeMessages.length > 0) {
     const STOP = new Set([
       'that', 'this', 'with', 'from', 'your', 'have', 'will', 'just', 'like',
@@ -1191,26 +1419,68 @@ function buildGroundedSummary(
     }
   }
 
-  // 5. Generate Very Short, Standard, and Detailed summaries with explicit (#index) references
-  const highMsgs = activeMessages.filter((m) => m.priority === 'high');
-  const veryShort: string[] = [];
+  // 5. Generate Short Overall Brief + Very Short, Standard, and Detailed bullet summaries
+  const highMsgs = activeMessages.filter((m) => m.priority === 'high' && !m.supersededByIndex);
+  const activeDecisions = decisions.filter((d) => !d.supersededByIndex);
+  const directMentionsCount = personalMentions.filter((pm) => pm.type !== 'followed_topic').length;
 
+  const briefParts: string[] = [];
+  if (highMsgs.length > 0) {
+    const topHigh = highMsgs[0];
+    briefParts.push(
+      `This conversation contains ${highMsgs.length} high-priority update${
+        highMsgs.length === 1 ? '' : 's'
+      }, led by ${topHigh.sender}${
+        topHigh.changeSummary ? ` (${topHigh.changeSummary} in #${topHigh.index})` : ` (#${topHigh.index})`
+      }.`
+    );
+  } else {
+    briefParts.push(
+      `Processed ${messages.length} messages across ${mainTopics.length} topic area(s) with no critical alerts.`
+    );
+  }
+  if (activeDecisions.length > 0) {
+    briefParts.push(
+      `Participants reached ${activeDecisions.length} active decision/schedule update${
+        activeDecisions.length === 1 ? '' : 's'
+      }.`
+    );
+  }
+  if (actionItems.length > 0 || deadlines.length > 0) {
+    briefParts.push(
+      `Extracted ${actionItems.length} action item${
+        actionItems.length === 1 ? '' : 's'
+      } and ${deadlines.length} upcoming deadline/event${deadlines.length === 1 ? '' : 's'}${
+        directMentionsCount > 0 ? ` (${directMentionsCount} directly mentioning you)` : ''
+      }.`
+    );
+  }
+  if (unansweredQuestions.length > 0) {
+    briefParts.push(
+      `${unansweredQuestions.length} question${
+        unansweredQuestions.length === 1 ? ' remains' : 's remain'
+      } unanswered and awaiting a reply.`
+    );
+  }
+  const overallBrief = briefParts.join(' ');
+
+  const veryShort: string[] = [];
   if (highMsgs.length > 0) {
     veryShort.push(
-      `Critical Updates (${highMsgs.length}): ${highMsgs
+      `Urgent Updates (${highMsgs.length}): ${highMsgs
         .slice(0, 2)
         .map(
           (m) =>
-            `${m.sender} reported "${m.content.slice(0, 95)}${
-              m.content.length > 95 ? '...' : ''
-            }" (#${m.index})`
+            `${m.sender} (${m.timestampRaw}) — ${
+              m.changeSummary ? `[${m.changeSummary}] ` : ''
+            }"${m.content.slice(0, 95)}${m.content.length > 95 ? '...' : ''}" (#${m.index})`
         )
         .join(' · ')}`
     );
   }
   if (deadlines.length > 0) {
     veryShort.push(
-      `Upcoming Deadlines (${deadlines.length}): ${deadlines
+      `Deadlines & Events (${deadlines.length}): ${deadlines
         .slice(0, 2)
         .map((d) => `${d.title} — ${d.displayDate} (#${d.messageIndex})`)
         .join('; ')}`
@@ -1218,13 +1488,13 @@ function buildGroundedSummary(
   }
   if (actionItems.length > 0) {
     veryShort.push(
-      `Action Items (${actionItems.length}): ${actionItems
+      `Assigned Tasks (${actionItems.length}): ${actionItems
         .slice(0, 2)
         .map(
           (a) =>
-            `${a.assignee}: ${a.description.slice(0, 75)}${
-              a.description.length > 75 ? '...' : ''
-            } (#${a.messageIndex})`
+            `${a.assignee}: ${a.conciseTitle || a.description.slice(0, 75)} (Due: ${a.deadline}, #${
+              a.messageIndex
+            })`
         )
         .join('; ')}`
     );
@@ -1240,51 +1510,72 @@ function buildGroundedSummary(
 
   // Standard summary
   const standard: string[] = [...veryShort];
-  if (decisions.length > 0) {
+  if (activeDecisions.length > 0) {
     standard.push(
-      `Key Decisions (${decisions.length}): ${decisions
+      `Decisions & Plan Revisions (${activeDecisions.length}): ${activeDecisions
         .slice(0, 2)
         .map(
           (d) =>
-            `${d.sender} confirmed "${d.text.slice(0, 90)}${
-              d.text.length > 90 ? '...' : ''
-            }" (#${d.messageIndex})`
+            `${d.sender} (${d.timestampRaw})${
+              d.supersedesIndex ? ` [Supersedes #${d.supersedesIndex}]` : ''
+            }: "${d.text.slice(0, 90)}${d.text.length > 90 ? '...' : ''}" (#${d.messageIndex})`
         )
         .join('; ')}`
     );
   }
   if (unansweredQuestions.length > 0) {
     standard.push(
-      `Open Unanswered Questions (${unansweredQuestions.length}): ${unansweredQuestions
+      `Awaiting Response (${unansweredQuestions.length}): ${unansweredQuestions
         .slice(0, 2)
-        .map((q) => `${q.sender} asked "${q.question.slice(0, 85)}" (#${q.messageIndex})`)
+        .map((q) => `${q.sender} (${q.timestampRaw}) asked "${q.question.slice(0, 85)}" (#${q.messageIndex})`)
         .join('; ')}`
     );
   }
 
   // Detailed summary
   const detailed: string[] = [
-    `Conversation Overview: Processed ${messages.length} total messages (${activeMessages.length} substantive messages, ${messages.filter((m) => m.isDuplicate).length} duplicate(s) filtered, ${messages.filter((m) => m.isSystem).length} system event(s)).`,
+    `Conversation Breakdown: Processed ${messages.length} total messages (${activeMessages.length} substantive messages, ${messages.filter((m) => m.priority === 'low').length} low-priority/casual messages, ${messages.filter((m) => m.isDuplicate).length} duplicate(s) filtered, ${messages.filter((m) => m.isSystem).length} system event(s)).`,
     ...announcements.map(
-      (a) => `[Announcement · #${a.messageIndex}] ${a.sender} (${a.timestampRaw}): ${a.text}`
+      (a) =>
+        `[Urgent Announcement · #${a.messageIndex}] ${a.sender} (${a.timestampRaw})${
+          a.changeSummary ? ` — ${a.changeSummary}` : ''
+        }: ${a.text}`
     ),
     ...decisions.map(
-      (d) => `[Decision · #${d.messageIndex}] ${d.sender} (${d.timestampRaw}): ${d.text}`
+      (d) =>
+        `[${
+          d.supersededByIndex
+            ? `Outdated Plan (Superseded by #${d.supersededByIndex})`
+            : d.supersedesIndex
+            ? `Updated Decision (Supersedes #${d.supersedesIndex})`
+            : 'Decision'
+        } · #${d.messageIndex}] ${d.sender} (${d.timestampRaw}): ${d.text}`
     ),
     ...deadlines.map(
       (dl) =>
-        `[Deadline/Event · #${dl.messageIndex}] ${dl.displayDate} (${dl.resolutionType.replace('_', ' ')}): ${dl.title}`
+        `[Deadline/Event · #${dl.messageIndex}] ${dl.displayDate} (${dl.resolutionType.replace(
+          '_',
+          ' '
+        )}): ${dl.title} — reported by ${dl.sender} (${dl.timestampRaw})`
     ),
     ...actionItems.map(
       (task) =>
-        `[Action Item · #${task.messageIndex}] Assigned to ${task.assignee} (Due: ${task.deadline}): ${task.description}`
+        `[Action Item · #${task.messageIndex}] Owner: ${task.assignee} (${
+          task.assigneeConfidence === 'explicit'
+            ? 'Explicitly stated'
+            : task.assigneeConfidence === 'inferred_sender'
+            ? 'Self-assigned'
+            : 'Uncertain'
+        }) | Due: ${task.deadline} — ${task.conciseTitle || task.description}`
     ),
     ...unansweredQuestions.map(
-      (uq) => `[Unanswered Question · #${uq.messageIndex}] ${uq.sender}: "${uq.question}"`
+      (uq) =>
+        `[Requires Response · #${uq.messageIndex}] ${uq.sender} (${uq.timestampRaw}): "${uq.question}"`
     ),
   ];
 
   return {
+    overallBrief,
     veryShort,
     standard,
     detailed,
@@ -1297,8 +1588,6 @@ function buildGroundedSummary(
 
 /**
  * Local Grounded Question Answering ("Ask AI")
- * Answers questions strictly using the imported conversation as the source of truth,
- * citing supporting original messages with sender and timestamp.
  */
 export async function answerConversationQuestion(
   question: string,
@@ -1324,7 +1613,6 @@ export async function answerConversationQuestion(
     }
   };
 
-  // Intent 1: Important announcements missed
   if (
     /\b(important|urgent|announcement|announcements|what did i miss|catch me up|summary|updates)\b/i.test(
       qLower
@@ -1335,6 +1623,7 @@ export async function answerConversationQuestion(
       (m) =>
         !m.isDuplicate &&
         !m.isSystem &&
+        !m.supersededByIndex &&
         (m.priority === 'high' ||
           m.categories.includes('announcement') ||
           m.categories.includes('schedule_change'))
@@ -1350,13 +1639,15 @@ export async function answerConversationQuestion(
         `Found ${highAndAnnouncements.length} important announcement(s) and high-priority update(s) in "${conversation.name}":`
       );
       highAndAnnouncements.slice(0, 6).forEach((m) => {
-        answerLines.push(`• [#${m.index}] ${m.sender} (${m.timestampRaw}): ${m.content}`);
+        answerLines.push(
+          `• [#${m.index}] ${m.sender} (${m.timestampRaw})${
+            m.changeSummary ? ` [${m.changeSummary}]` : ''
+          }: ${m.content}`
+        );
         addCitation(m);
       });
     }
-  }
-  // Intent 2: Exam schedule / "When is the next exam?"
-  else if (/\b(exam|midterm|final|quiz|test|viva|assessment)\b/i.test(qLower)) {
+  } else if (/\b(exam|midterm|final|quiz|test|viva|assessment)\b/i.test(qLower)) {
     const examDeadlines = conversation.deadlines.filter(
       (d) =>
         d.category === 'exam' ||
@@ -1383,7 +1674,11 @@ export async function answerConversationQuestion(
             ? `${d.userConfirmedDate} (User confirmed)`
             : `${d.displayDate} (${d.resolutionType.replace('_', ' ')})`;
           answerLines.push(
-            `• ${confirmedText} — reported by ${d.sender} (${d.timestampRaw}, #${d.messageIndex}): "${d.originalContent}"`
+            `• ${confirmedText}${
+              d.previousScheduleNote ? ` [${d.previousScheduleNote}]` : ''
+            } — reported by ${d.sender} (${d.timestampRaw}, #${d.messageIndex}): "${
+              d.originalContent
+            }"`
           );
           const msg = conversation.messages.find((m) => m.id === d.messageId);
           if (msg) addCitation(msg);
@@ -1398,9 +1693,7 @@ export async function answerConversationQuestion(
         }
       });
     }
-  }
-  // Intent 3: Assignments due / deadlines
-  else if (
+  } else if (
     /\b(assignment|assignments|homework|due|deadline|deadlines|submit|submission)\b/i.test(qLower)
   ) {
     const matchingDeadlines = conversation.deadlines.filter((d) =>
@@ -1444,9 +1737,7 @@ export async function answerConversationQuestion(
         }
       });
     }
-  }
-  // Intent 4: Meeting / schedule changes
-  else if (
+  } else if (
     /\b(change|changed|reschedule|rescheduled|moved|postponed|meeting|time|venue|room)\b/i.test(
       qLower
     )
@@ -1457,6 +1748,7 @@ export async function answerConversationQuestion(
         !m.isSystem &&
         !m.isJokeOrHypothetical &&
         (m.categories.includes('schedule_change') ||
+          Boolean(m.changeSummary) ||
           /\b(meeting|sync|call|rescheduled|moved|postponed|changed|room|venue|auditorium|time)\b/i.test(
             m.content
           ))
@@ -1472,13 +1764,15 @@ export async function answerConversationQuestion(
         `Found ${changeMsgs.length} message(s) regarding meetings or schedule/venue changes:`
       );
       changeMsgs.slice(0, 6).forEach((m) => {
-        answerLines.push(`• [#${m.index}] ${m.sender} (${m.timestampRaw}): "${m.content}"`);
+        answerLines.push(
+          `• [#${m.index}] ${m.sender} (${m.timestampRaw})${
+            m.changeSummary ? ` [${m.changeSummary}]` : ''
+          }: "${m.content}"`
+        );
         addCitation(m);
       });
     }
-  }
-  // Intent 5: Tasks assigned to me / Action items
-  else if (
+  } else if (
     /\b(task|tasks|action item|assigned|todo|to-do|my tasks|what do i need to do)\b/i.test(qLower)
   ) {
     const askingAboutMe = /\b(me|my|i need|assigned to me)\b/i.test(qLower);
@@ -1510,7 +1804,7 @@ export async function answerConversationQuestion(
         );
         myTasks.forEach((t) => {
           answerLines.push(
-            `• [${t.assignee} · Due: ${t.deadline}] ${t.description} (Source: ${t.sender}, ${t.timestampRaw}, #${t.messageIndex})`
+            `• [${t.assignee} · Due: ${t.deadline}] ${t.conciseTitle || t.description} (Source: ${t.sender}, ${t.timestampRaw}, #${t.messageIndex})`
           );
           const msg = conversation.messages.find((m) => m.id === t.messageId);
           if (msg) addCitation(msg);
@@ -1526,16 +1820,16 @@ export async function answerConversationQuestion(
         );
         conversation.actionItems.forEach((t) => {
           answerLines.push(
-            `• Assignee: ${t.assignee} | Due: ${t.deadline} — "${t.description}" (#${t.messageIndex} by ${t.sender})`
+            `• Assignee: ${t.assignee} | Due: ${t.deadline} — "${
+              t.conciseTitle || t.description
+            }" (#${t.messageIndex} by ${t.sender})`
           );
           const msg = conversation.messages.find((m) => m.id === t.messageId);
           if (msg) addCitation(msg);
         });
       }
     }
-  }
-  // Intent 6: Decisions made
-  else if (/\b(decision|decisions|decided|agreed|consensus|finalized)\b/i.test(qLower)) {
+  } else if (/\b(decision|decisions|decided|agreed|consensus|finalized)\b/i.test(qLower)) {
     const decisions = conversation.summary.decisions;
     if (decisions.length === 0) {
       answerLines.push(
@@ -1543,16 +1837,24 @@ export async function answerConversationQuestion(
       );
       confidence = 'not_found';
     } else {
-      answerLines.push(`Found ${decisions.length} explicit decision(s) in the conversation:`);
+      answerLines.push(`Found ${decisions.length} decision(s) and plan update(s) in the conversation:`);
       decisions.forEach((d) => {
-        answerLines.push(`• [#${d.messageIndex}] ${d.sender} (${d.timestampRaw}): "${d.text}"`);
+        answerLines.push(
+          `• [#${d.messageIndex}] ${d.sender} (${d.timestampRaw})${
+            d.supersededByIndex
+              ? ` [SUPERSEDED by #${d.supersededByIndex}]`
+              : d.supersedesIndex
+              ? ` [Supersedes earlier plan in #${d.supersedesIndex}]`
+              : d.changeSummary
+              ? ` [${d.changeSummary}]`
+              : ''
+          }: "${d.text}"`
+        );
         const msg = conversation.messages.find((m) => m.id === d.messageId);
         if (msg) addCitation(msg);
       });
     }
-  }
-  // Intent 7: Unanswered questions
-  else if (/\b(unanswered|open question|questions)\b/i.test(qLower)) {
+  } else if (/\b(unanswered|open question|questions|response)\b/i.test(qLower)) {
     const uqs = conversation.summary.unansweredQuestions;
     if (uqs.length === 0) {
       answerLines.push('All detected questions in this conversation appear to have been addressed.');
@@ -1566,7 +1868,6 @@ export async function answerConversationQuestion(
     }
   }
 
-  // Fallback / General Keyword & Semantic Search across all messages
   if (answerLines.length === 0) {
     const STOP = new Set([
       'what', 'when', 'where', 'which', 'who', 'why', 'how', 'show', 'tell', 'find',
@@ -1615,7 +1916,6 @@ export async function answerConversationQuestion(
     }
   }
 
-  // Optional Browser-Native Local AI (`window.ai`) synthesis if enabled by user and supported in browser
   if (userProfile.useBrowserNativeAI && citations.length > 0) {
     try {
       const win = window as unknown as {

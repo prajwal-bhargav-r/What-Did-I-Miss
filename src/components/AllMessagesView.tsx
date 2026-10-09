@@ -335,6 +335,28 @@ export const AllMessagesView: React.FC<AllMessagesViewProps> = ({
                           <span className="text-neutral-500">Humor / Hypothetical</span>
                         </>
                       )}
+                      {msg.supersededByIndex && (
+                        <>
+                          <span aria-hidden="true" className="text-neutral-300">·</span>
+                          <span className="text-amber-700 font-semibold">
+                            Superseded by #{msg.supersededByIndex}
+                          </span>
+                        </>
+                      )}
+                      {msg.supersedesIndex && (
+                        <>
+                          <span aria-hidden="true" className="text-neutral-300">·</span>
+                          <span className="text-neutral-900 font-semibold">
+                            Supersedes #{msg.supersedesIndex}
+                          </span>
+                        </>
+                      )}
+                      {msg.requiresResponse && (
+                        <>
+                          <span aria-hidden="true" className="text-neutral-300">·</span>
+                          <span className="text-amber-700 font-medium">Requires Response</span>
+                        </>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2 text-xs">

@@ -186,6 +186,12 @@ export const DeadlinesView: React.FC<DeadlinesViewProps> = ({
 
               <p className="text-sm font-medium text-neutral-950 leading-relaxed">{dl.title}</p>
 
+              {dl.previousScheduleNote && (
+                <div className="text-xs font-medium text-neutral-900 bg-neutral-100 border border-neutral-200 rounded px-2.5 py-1">
+                  Schedule Revision: {dl.previousScheduleNote}
+                </div>
+              )}
+
               <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-xs space-y-1.5">
                 <div className="text-neutral-600">
                   <span className="font-semibold text-neutral-900">Date Resolution Logic: </span>

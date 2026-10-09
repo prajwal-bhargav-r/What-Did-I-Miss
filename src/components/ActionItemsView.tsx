@@ -224,7 +224,14 @@ export const ActionItemsView: React.FC<ActionItemsViewProps> = ({
                         }
                       >
                         {task.assignee}
-                      </strong>
+                      </strong>{' '}
+                      <span className="text-neutral-500">
+                        ({task.assigneeConfidence === 'explicit'
+                          ? 'Explicitly Stated'
+                          : task.assigneeConfidence === 'inferred_sender'
+                          ? 'Self-Assigned'
+                          : 'Uncertain'})
+                      </span>
                     </span>
                     <span aria-hidden="true" className="text-neutral-300">·</span>
                     <span className="font-mono tabular-nums text-neutral-600">
@@ -239,6 +246,15 @@ export const ActionItemsView: React.FC<ActionItemsViewProps> = ({
                         }
                       >
                         {task.deadline}
+                      </span>{' '}
+                      <span className="text-neutral-500">
+                        ({task.deadlineConfidence === 'explicit'
+                          ? 'Explicit'
+                          : task.deadlineConfidence === 'relative_resolved'
+                          ? 'Relative Resolved'
+                          : task.deadlineConfidence === 'ambiguous'
+                          ? 'Ambiguous'
+                          : 'Not Specified'})
                       </span>
                     </span>
                     <span aria-hidden="true" className="text-neutral-300">·</span>
@@ -247,12 +263,23 @@ export const ActionItemsView: React.FC<ActionItemsViewProps> = ({
                     </span>
                   </div>
 
-                  {/* Task Description */}
+                  {/* Task Concise Headline & Description */}
+                  {task.conciseTitle && (
+                    <p
+                      className={`text-sm font-semibold leading-relaxed ${
+                        task.status === 'completed'
+                          ? 'line-through text-neutral-400'
+                          : 'text-neutral-950'
+                      }`}
+                    >
+                      {task.conciseTitle}
+                    </p>
+                  )}
                   <p
-                    className={`text-sm font-medium leading-relaxed ${
+                    className={`text-xs leading-relaxed ${
                       task.status === 'completed'
                         ? 'line-through text-neutral-400'
-                        : 'text-neutral-950'
+                        : 'text-neutral-700'
                     }`}
                   >
                     {task.description}

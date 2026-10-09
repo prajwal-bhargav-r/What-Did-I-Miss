@@ -146,6 +146,46 @@ export const ImportantMessagesView: React.FC<ImportantMessagesViewProps> = ({
                   <span className="text-neutral-600 capitalize">
                     {msg.categories.map((c) => c.replace('_', ' ')).join(' / ')}
                   </span>
+                  {msg.requiresResponse && (
+                    <>
+                      <span aria-hidden="true" className="text-neutral-300">·</span>
+                      <span className="font-semibold text-amber-700">Requires Response</span>
+                    </>
+                  )}
+                  {msg.supersededByIndex && (
+                    <>
+                      <span aria-hidden="true" className="text-neutral-300">·</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const sup = conversation.messages.find(
+                            (m) => m.index === msg.supersededByIndex
+                          );
+                          if (sup) onInspectMessage(sup.id);
+                        }}
+                        className="font-semibold text-amber-800 underline"
+                      >
+                        Superseded by #{msg.supersededByIndex}
+                      </button>
+                    </>
+                  )}
+                  {msg.supersedesIndex && (
+                    <>
+                      <span aria-hidden="true" className="text-neutral-300">·</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const old = conversation.messages.find(
+                            (m) => m.index === msg.supersedesIndex
+                          );
+                          if (old) onInspectMessage(old.id);
+                        }}
+                        className="font-semibold text-neutral-900 underline"
+                      >
+                        Supersedes #{msg.supersedesIndex}
+                      </button>
+                    </>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
@@ -167,7 +207,17 @@ export const ImportantMessagesView: React.FC<ImportantMessagesViewProps> = ({
                 </div>
               </div>
 
-              <p className="text-sm leading-relaxed text-neutral-900 whitespace-pre-wrap">
+              {msg.changeSummary && (
+                <div className="text-xs font-medium text-neutral-900 bg-neutral-100 border border-neutral-200 rounded px-2.5 py-1">
+                  Revision / Change Summary: {msg.changeSummary}
+                </div>
+              )}
+
+              <p
+                className={`text-sm leading-relaxed whitespace-pre-wrap ${
+                  msg.supersededByIndex ? 'line-through text-neutral-400' : 'text-neutral-900'
+                }`}
+              >
                 {msg.content}
               </p>
 

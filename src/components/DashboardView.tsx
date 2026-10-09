@@ -295,6 +295,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         <div className="p-6 space-y-6">
+          {/* Short Overall Summary */}
+          {conversation.summary.overallBrief && (
+            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-1">
+              <div className="text-xs font-semibold text-neutral-950">
+                Short Overall Summary
+              </div>
+              <p className="text-sm leading-relaxed text-neutral-800">
+                {renderSummaryLineWithLinks(conversation.summary.overallBrief)}
+              </p>
+            </div>
+          )}
+
           {/* Executive Summary Bullets with Clickable #Message Citations */}
           <ul className="space-y-2.5 text-sm leading-relaxed text-neutral-800">
             {summaryItems.map((line, i) => (
@@ -311,20 +323,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 border-t border-neutral-200 pt-6">
             {/* Main Topics Discussed */}
             <div className="space-y-3">
-              <h3 className="text-xs font-semibold text-neutral-900">
+              <h3 className="text-sm font-semibold text-neutral-950">
                 Main Topics Discussed ({conversation.summary.mainTopics.length})
               </h3>
               <div className="divide-y divide-neutral-200 text-xs">
                 {conversation.summary.mainTopics.map((topic) => (
-                  <div key={topic.id} className="py-2.5 first:pt-0 last:pb-0">
-                    <div className="flex items-center justify-between font-medium text-neutral-950">
+                  <div key={topic.id} className="py-3 first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between text-sm font-medium text-neutral-950">
                       <span>{topic.topic}</span>
-                      <span className="font-mono tabular-nums text-neutral-500">
+                      <span className="font-mono text-xs tabular-nums text-neutral-500">
                         {topic.messageCount} msg{topic.messageCount === 1 ? '' : 's'}
                       </span>
                     </div>
-                    <p className="mt-1 text-neutral-600 line-clamp-2">{topic.summary}</p>
-                    <div className="mt-1.5 flex items-center gap-2 text-neutral-500">
+                    <p className="mt-1 text-sm text-neutral-700 line-clamp-2">{topic.summary}</p>
+                    <div className="mt-1.5 flex items-center gap-2 text-xs text-neutral-500">
                       <span>Active: {topic.participants.join(', ')}</span>
                       {topic.keyMessageIds[0] && (
                         <>
@@ -344,54 +356,113 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             </div>
 
-            {/* Significant Decisions */}
+            {/* Significant Decisions & Revisions */}
             <div className="space-y-3">
-              <h3 className="text-xs font-semibold text-neutral-900">
-                Significant Decisions ({conversation.summary.decisions.length})
+              <h3 className="text-sm font-semibold text-neutral-950">
+                Decisions & Plan Changes ({conversation.summary.decisions.length})
               </h3>
               {conversation.summary.decisions.length === 0 ? (
-                <p className="text-xs text-neutral-500">
+                <p className="text-sm text-neutral-500">
                   No formal decisions or explicit agreements detected in this conversation.
                 </p>
               ) : (
                 <div className="divide-y divide-neutral-200 text-xs">
-                  {conversation.summary.decisions.map((dec) => (
-                    <div key={dec.id} className="py-2.5 first:pt-0 last:pb-0">
-                      <p className="text-neutral-800 leading-relaxed">{dec.text}</p>
-                      <div className="mt-1.5 flex items-center gap-2 text-neutral-500">
-                        <span className="font-medium text-neutral-950">{dec.sender}</span>
-                        <span aria-hidden="true">·</span>
-                        <span className="font-mono tabular-nums">{dec.timestampRaw}</span>
-                        <span aria-hidden="true">·</span>
-                        <button
-                          type="button"
-                          onClick={() => onInspectMessage(dec.messageId)}
-                          className="text-neutral-950 font-semibold hover:underline font-mono tabular-nums whitespace-nowrap shrink-0"
+                  {conversation.summary.decisions.map((dec) => {
+                    const isSuperseded = Boolean(dec.supersededByIndex);
+                    const supersededMsg = dec.supersededByIndex
+                      ? conversation.messages.find((m) => m.index === dec.supersededByIndex)
+                      : null;
+                    const supersedesMsg = dec.supersedesIndex
+                      ? conversation.messages.find((m) => m.index === dec.supersedesIndex)
+                      : null;
+
+                    return (
+                      <div key={dec.id} className="py-3 first:pt-0 last:pb-0 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {isSuperseded ? (
+                            <span className="text-amber-700 font-semibold">
+                              Outdated / Superseded Plan
+                            </span>
+                          ) : dec.supersedesIndex || dec.changeSummary ? (
+                            <span className="text-neutral-950 font-bold">
+                              Updated Decision / Revision
+                            </span>
+                          ) : (
+                            <span className="text-emerald-700 font-medium">
+                              Explicit Decision
+                            </span>
+                          )}
+                          {dec.supersedesIndex && supersedesMsg && (
+                            <button
+                              type="button"
+                              onClick={() => onInspectMessage(supersedesMsg.id)}
+                              className="font-mono text-neutral-700 underline hover:text-neutral-950"
+                            >
+                              (Supersedes #{dec.supersedesIndex})
+                            </button>
+                          )}
+                          {dec.supersededByIndex && supersededMsg && (
+                            <button
+                              type="button"
+                              onClick={() => onInspectMessage(supersededMsg.id)}
+                              className="font-mono text-amber-800 underline hover:text-neutral-950"
+                            >
+                              (Replaced by #{dec.supersededByIndex})
+                            </button>
+                          )}
+                        </div>
+
+                        {dec.changeSummary && !isSuperseded && (
+                          <p className="font-medium text-neutral-900 bg-neutral-100 px-2 py-1 rounded">
+                            {dec.changeSummary}
+                          </p>
+                        )}
+
+                        <p
+                          className={`text-sm leading-relaxed ${
+                            isSuperseded
+                              ? 'line-through text-neutral-400'
+                              : 'text-neutral-800'
+                          }`}
                         >
-                          Verify #{dec.messageIndex}
-                        </button>
+                          {dec.text}
+                        </p>
+                        <div className="flex items-center gap-2 text-xs text-neutral-500">
+                          <span className="font-medium text-neutral-950">{dec.sender}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-mono tabular-nums">{dec.timestampRaw}</span>
+                          <span aria-hidden="true">·</span>
+                          <button
+                            type="button"
+                            onClick={() => onInspectMessage(dec.messageId)}
+                            className="text-neutral-950 font-semibold hover:underline font-mono tabular-nums whitespace-nowrap shrink-0"
+                          >
+                            Verify #{dec.messageIndex}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* Unanswered Questions */}
+            {/* Unanswered Questions & Messages Requiring Response */}
             <div className="space-y-3">
-              <h3 className="text-xs font-semibold text-neutral-900">
-                Unanswered Questions ({conversation.summary.unansweredQuestions.length})
+              <h3 className="text-sm font-semibold text-neutral-950">
+                Requires Response / Unanswered ({conversation.summary.unansweredQuestions.length})
               </h3>
               {conversation.summary.unansweredQuestions.length === 0 ? (
-                <p className="text-xs text-neutral-500">
+                <p className="text-sm text-neutral-500">
                   All detected questions appear to have received follow-up responses.
                 </p>
               ) : (
                 <div className="divide-y divide-neutral-200 text-xs">
                   {conversation.summary.unansweredQuestions.map((uq) => (
-                    <div key={uq.id} className="py-2.5 first:pt-0 last:pb-0">
-                      <p className="text-neutral-800 leading-relaxed">“{uq.question}”</p>
-                      <div className="mt-1.5 flex items-center gap-2 text-neutral-500">
+                    <div key={uq.id} className="py-3 first:pt-0 last:pb-0 space-y-1.5">
+                      <p className="text-sm text-neutral-800 leading-relaxed">“{uq.question}”</p>
+                      <p className="text-xs text-neutral-500">{uq.contextNote}</p>
+                      <div className="flex items-center gap-2 text-xs text-neutral-500">
                         <span className="font-medium text-neutral-950">{uq.sender}</span>
                         <span aria-hidden="true">·</span>
                         <span className="font-mono tabular-nums">{uq.timestampRaw}</span>
@@ -443,7 +514,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {conversation.summary.announcements.slice(0, 4).map((ann) => (
                   <div key={ann.id} className="p-5 hover:bg-neutral-50 transition-colors">
                     <div className="flex items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-2 text-neutral-500">
+                      <div className="flex flex-wrap items-center gap-2 text-neutral-500">
                         <span
                           className={
                             ann.priority === 'high'
@@ -466,6 +537,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         Source #{ann.messageIndex}
                       </button>
                     </div>
+                    {ann.changeSummary && (
+                      <div className="mt-2 text-xs font-medium text-neutral-900 bg-neutral-100 border border-neutral-200 rounded px-2.5 py-1">
+                        Schedule / Plan Change: {ann.changeSummary}
+                      </div>
+                    )}
                     <p className="mt-2 text-sm text-neutral-900 leading-relaxed whitespace-pre-wrap">
                       {ann.text}
                     </p>
@@ -516,18 +592,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {conversation.personalMentions.slice(0, 4).map((mention) => (
                   <div key={mention.id} className="p-5 hover:bg-neutral-50 transition-colors">
                     <div className="flex items-center justify-between gap-2 text-xs">
-                      <div className="flex items-center gap-2 text-neutral-500">
+                      <div className="flex flex-wrap items-center gap-2 text-neutral-500">
                         <span className="font-bold text-neutral-950">
                           {mention.type === 'assigned_task'
                             ? 'Task Assigned to You'
                             : mention.type === 'direct_question'
                             ? 'Question for You'
+                            : mention.type === 'requires_response'
+                            ? 'Requires Your Response'
                             : mention.type === 'direct_mention'
                             ? 'Direct Mention'
                             : mention.type === 'reply_to_user'
                             ? 'Reply to Your Message'
                             : `Topic: ${mention.matchedTerm}`}
                         </span>
+                        {mention.requiresResponse && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-semibold text-amber-700">Needs Response</span>
+                          </>
+                        )}
                         <span aria-hidden="true">·</span>
                         <span className="font-semibold text-neutral-900">{mention.sender}</span>
                         <span aria-hidden="true">·</span>
@@ -614,6 +698,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
 
                     <p className="text-sm font-medium text-neutral-900">{dl.title}</p>
+                    {dl.previousScheduleNote && (
+                      <p className="text-xs font-medium text-neutral-800">
+                        Schedule Change: {dl.previousScheduleNote}
+                      </p>
+                    )}
                     <p className="text-xs text-neutral-600">{dl.resolutionExplanation}</p>
 
                     {/* Ambiguous Date Confirmation Prompt */}
@@ -727,7 +816,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </span>
                       <span aria-hidden="true" className="text-neutral-400">·</span>
                       <span className="text-neutral-600">
-                        Assigned to:{' '}
+                        Owner:{' '}
                         <strong
                           className={
                             task.assigneeConfidence === 'uncertain'
@@ -736,7 +825,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           }
                         >
                           {task.assignee}
-                        </strong>
+                        </strong>{' '}
+                        <span className="text-neutral-500">
+                          ({task.assigneeConfidence === 'explicit'
+                            ? 'Explicitly stated'
+                            : task.assigneeConfidence === 'inferred_sender'
+                            ? 'Self-assigned'
+                            : 'Uncertain'})
+                        </span>
                       </span>
                       <span aria-hidden="true" className="text-neutral-400">·</span>
                       <span className="font-mono tabular-nums text-neutral-600">
@@ -752,14 +848,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </button>
                     </div>
 
+                    {task.conciseTitle && (
+                      <p
+                        className={`text-sm font-semibold ${
+                          task.status === 'completed'
+                            ? 'line-through text-neutral-400'
+                            : 'text-neutral-950'
+                        }`}
+                      >
+                        {task.conciseTitle}
+                      </p>
+                    )}
+
                     <p
-                      className={`text-sm leading-relaxed ${
+                      className={`text-xs leading-relaxed ${
                         task.status === 'completed'
                           ? 'line-through text-neutral-400'
-                          : 'text-neutral-900'
+                          : 'text-neutral-700'
                       }`}
                     >
-                      {task.description}
+                      Source quote: “{task.description}”
                     </p>
                   </div>
 
